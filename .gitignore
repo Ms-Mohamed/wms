@@ -1,0 +1,99 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.exe
+*.pdb
+*.csproj.user
+*.csproj.vspscc
+*.suo
+*.useros
+*.sln.docstates
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment Variables (CRITICAL - Never commit secrets!)
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+appsettings.Development.json
+backend-python/.env
+backend-csharp/WMS.API/appsettings.json
+backend-csharp/WMS.API/appsettings.Development.json
+
+# Keep example files
+!appsettings.json.example
+!backend-python/.env.example
+!backend-csharp/WMS.API/appsettings.json.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Coverage reports
+coverage/
+*.coverage
+.nyc_output/
+
+# Build outputs
+dist/
+build/
+out/
+

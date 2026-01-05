@@ -1,11 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
 using WMS.API.Resources;
+using Microsoft.AspNetCore.Authorization;
 using WMS.Business.DTOs;
 using WMS.Business.Services;
 
 namespace WMS.API.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class InvoicesController : ControllerBase

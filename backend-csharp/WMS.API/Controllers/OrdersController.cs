@@ -4,9 +4,11 @@ using WMS.API.Resources;
 using WMS.Business.DTOs;
 using WMS.Business.Exceptions;
 using WMS.Business.Services;
+using Microsoft.AspNetCore.Authorization;
 
 namespace WMS.API.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class OrdersController : ControllerBase
@@ -46,6 +48,35 @@ public class OrdersController : ControllerBase
             _logger.LogError(ex, "Erreur lors de la création de la commande");
             var errorMessage = _localizer["OrderCreationError"];
             return StatusCode(500, new { error = errorMessage.Value });
+        }
+    }
+
+    [HttpPost("{id}/ship")]
+    public async Task<ActionResult<OrderDto>> ShipOrder(int id, [FromBody] ShipOrderDto shipOrderDto)
+    {
+        try
+        {
+            var order = await _orderService.ShipOrderAsync(id, shipOrderDto);
+            return Ok(order);
+        }
+        catch (InsufficientStockException ex)
+        {
+            _logger.LogWarning(ex, "Stock insuffisant pour l'expédition");
+             // Using a generic error message for now as localizer might need parameters adjustment
+            return BadRequest(new { error = "Stock insuffisant", productId = ex.ProductId, requiredQuantity = ex.RequiredQuantity, availableQuantity = ex.AvailableQuantity });
+        }
+        catch (ArgumentException ex)
+        {
+            return NotFound(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de l'expédition de la commande");
+            return StatusCode(500, new { error = "Une erreur est survenue lors de l'expédition" });
         }
     }
 

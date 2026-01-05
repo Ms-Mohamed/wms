@@ -1,0 +1,78 @@
+services:
+  # 1. Database Service (PostgreSQL)
+  db:
+    image: postgres:14-alpine
+    container_name: wms-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: wms_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - wms-network
+
+  # 2. Backend C# Service
+  wms-api:
+    build:
+      context: ./backend-csharp
+      dockerfile: Dockerfile
+    container_name: wms-api
+    depends_on:
+      - db
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=wms_db;Username=postgres;Password=password123
+      - ASPNETCORE_URLS=http://+:8080
+    ports:
+      - "8080:8080"
+    networks:
+      - wms-network
+
+  # 3. Backend Python Service
+  wms-analytics:
+    build:
+      context: ./backend-python
+      dockerfile: Dockerfile
+    container_name: wms-analytics
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=wms_db
+      - DB_USER=postgres
+      - DB_PASSWORD=password123
+    ports:
+      - "8000:8000"
+    networks:
+      - wms-network
+
+  # 4. Frontend Service
+  wms-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: wms-frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - VITE_API_TARGET=http://wms-api:8080
+      - VITE_PYTHON_API_TARGET=http://wms-analytics:8000
+    depends_on:
+      - wms-api
+      - wms-analytics
+    networks:
+      - wms-network
+
+networks:
+  wms-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

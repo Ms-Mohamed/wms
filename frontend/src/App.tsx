@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Box, Spinner, Center } from '@chakra-ui/react';
+import { Spinner, Center } from '@chakra-ui/react';
 import Layout from './components/Layout/Layout';
 
 // Code Splitting avec React.lazy
@@ -10,6 +10,11 @@ const Products = lazy(() => import('./pages/Products'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 const Invoice = lazy(() => import('./pages/Invoice'));
+const Suppliers = lazy(() => import('./pages/Suppliers'));
+const Locations = lazy(() => import('./pages/Locations')); // [NEW]
+const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'));
+const SalesOrders = lazy(() => import('./pages/SalesOrders'));
+const Returns = lazy(() => import('./pages/Returns')); // [NEW]
 
 // Loading component
 const LoadingSpinner = () => (
@@ -18,22 +23,37 @@ const LoadingSpinner = () => (
   </Center>
 );
 
+import { AuthProvider } from './context/AuthContext';
+import Login from './pages/Login';
+import PrivateRoute from './components/PrivateRoute';
+
 function App() {
   return (
     <BrowserRouter>
-      <Layout>
+      <AuthProvider>
         <Suspense fallback={<LoadingSpinner />}>
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/orders" element={<Orders />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/stock" element={<Stock />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/invoices/:orderId" element={<Invoice />} />
+            <Route path="/login" element={<Login />} />
+
+            <Route element={<PrivateRoute />}>
+              <Route element={<Layout />}>
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/orders" element={<Orders />} />
+                <Route path="/sales-orders" element={<SalesOrders />} />
+                <Route path="/returns" element={<Returns />} /> {/* [NEW] */}
+                <Route path="/purchase-orders" element={<PurchaseOrders />} /> {/* [NEW] */}
+                <Route path="/products" element={<Products />} />
+                <Route path="/stock" element={<Stock />} />
+                <Route path="/suppliers" element={<Suppliers />} /> {/* [NEW] */}
+                <Route path="/locations" element={<Locations />} /> {/* [NEW] */}
+                <Route path="/analytics" element={<Analytics />} />
+                <Route path="/invoices/:orderId" element={<Invoice />} />
+              </Route>
+            </Route>
           </Routes>
         </Suspense>
-      </Layout>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

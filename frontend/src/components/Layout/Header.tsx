@@ -1,10 +1,10 @@
 import { memo, useCallback } from 'react';
-import { Box, Flex, Button, Select, Text } from '@chakra-ui/react';
+import { Box, Flex, Select, Text } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
 import { GlobeAltIcon } from '@heroicons/react/24/outline';
 
 const Header = memo(() => {
-  const { i18n, t } = useTranslation();
+  const { i18n } = useTranslation();
 
   const handleLanguageChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {

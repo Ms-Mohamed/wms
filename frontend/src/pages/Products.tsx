@@ -23,10 +23,11 @@ import {
   HStack,
   useToast,
   IconButton,
+  Select,
 } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { productsApi } from '../services/api';
+import { productsApi, locationsApi } from '../services/api';
 import type { Product } from '../types';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
@@ -44,6 +45,12 @@ const Products = memo(() => {
     unitPrice: 0,
     costPrice: 0,
     unit: 'PIECE',
+    defaultLocationId: 0,
+  });
+
+  const { data: locations } = useQuery({
+    queryKey: ['locations'],
+    queryFn: () => locationsApi.getAll().then(res => res.data),
   });
 
   const { data: products } = useQuery({
@@ -78,6 +85,16 @@ const Products = memo(() => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       toast({ title: t('common.success'), status: 'success' });
     },
+    onError: (error: any) => {
+      const errorMessage = error?.response?.data?.error || t('common.error');
+      toast({
+        title: t('common.error'),
+        description: errorMessage,
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      });
+    },
   });
 
   const resetForm = useCallback(() => {
@@ -88,6 +105,7 @@ const Products = memo(() => {
       unitPrice: 0,
       costPrice: 0,
       unit: 'PIECE',
+      defaultLocationId: 0,
     });
     setEditingProduct(null);
   }, []);
@@ -101,6 +119,7 @@ const Products = memo(() => {
       unitPrice: product.unitPrice,
       costPrice: product.costPrice,
       unit: product.unit,
+      defaultLocationId: product.defaultLocationId || 0,
     });
     onOpen();
   }, [onOpen]);
@@ -226,6 +245,21 @@ const Products = memo(() => {
                 </NumberInput>
               </FormControl>
             </HStack>
+
+            <FormControl mb={4}>
+              <FormLabel>Emplacement par défaut</FormLabel>
+              <Select
+                placeholder="Sélectionner un emplacement"
+                value={formData.defaultLocationId || ''}
+                onChange={(e) => setFormData({ ...formData, defaultLocationId: parseInt(e.target.value) || 0 })}
+              >
+                {locations?.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name} {loc.zone ? `(${loc.zone})` : ''}
+                  </option>
+                ))}
+              </Select>
+            </FormControl>
 
             <HStack>
               <Button onClick={onClose}>{t('common.cancel')}</Button>

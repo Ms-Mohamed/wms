@@ -8,14 +8,14 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/api')
       },
-      '/analytics': {
-        target: 'http://localhost:8000',
+      '/python-api': {
+        target: process.env.VITE_PYTHON_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/analytics/, '/api/analytics')
+        rewrite: (path) => path.replace(/^\/python-api/, '/api/analytics')
       }
     }
   }

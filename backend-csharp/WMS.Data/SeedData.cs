@@ -151,6 +151,7 @@ public static class SeedData
             {
                 ProductId = products[2].Id,
                 WarehouseId = warehouse1.Id,
+                LocationId = location1.Id,
                 Quantity = 75,
                 ReservedQuantity = 0,
                 AverageCost = 80.00m,
@@ -161,6 +162,7 @@ public static class SeedData
             {
                 ProductId = products[3].Id,
                 WarehouseId = warehouse1.Id,
+                LocationId = location1.Id,
                 Quantity = 30,
                 ReservedQuantity = 0,
                 AverageCost = 280.00m,
@@ -171,6 +173,7 @@ public static class SeedData
             {
                 ProductId = products[4].Id,
                 WarehouseId = warehouse1.Id,
+                LocationId = location1.Id,
                 Quantity = 500,
                 ReservedQuantity = 0,
                 AverageCost = 8.00m,

@@ -26,5 +26,7 @@ public class CreateProductDto
     public bool RequiresLotTracking { get; set; }
 
     public bool RequiresSerialTracking { get; set; }
+
+    public int? DefaultLocationId { get; set; }
 }
 

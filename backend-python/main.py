@@ -25,7 +25,7 @@ from dateutil import parser as date_parser
 # Charger le .env depuis le répertoire du script au démarrage
 env_path = Path(__file__).parent / '.env'
 if env_path.exists():
-    load_dotenv(dotenv_path=env_path, override=True)
+    load_dotenv(dotenv_path=env_path, override=False)
     print(f"[STARTUP] Fichier .env chargé depuis: {env_path}")
     print(f"[STARTUP] DB_PASSWORD: {'OUI' if os.getenv('DB_PASSWORD') and os.getenv('DB_PASSWORD') != 'postgres' else 'NON (défaut)'}")
 else:
@@ -87,7 +87,7 @@ def get_db_connection():
     # Forcer le rechargement du .env à chaque connexion depuis le répertoire du script
     from pathlib import Path
     env_path = Path(__file__).parent / '.env'
-    load_dotenv(dotenv_path=env_path, override=True)
+    load_dotenv(dotenv_path=env_path, override=False)
     
     db_host = os.getenv("DB_HOST", "localhost")
     db_port = os.getenv("DB_PORT", "5432")
@@ -143,13 +143,13 @@ def root():
         "mode": "read-only"
     }
 
-@app.get("/api/analytics/test-simple")
+@app.get("/test-simple")
 async def test_simple():
     """Endpoint de test ultra-simple pour vérifier que FastAPI fonctionne"""
     print(f"[DEBUG] test_simple appelé")
     return {"message": "Test simple réussi", "status": "ok"}
 
-@app.get("/api/analytics/test-optimize/{product_id}")
+@app.get("/test-optimize/{product_id}")
 async def test_optimize_logic(product_id: int):
     """Endpoint de test pour déboguer l'optimize"""
     print(f"[DEBUG] test_optimize_logic appelé pour product_id={product_id}")
@@ -200,7 +200,187 @@ async def test_optimize_logic(product_id: int):
         if conn:
             conn.close()
 
-@app.get("/api/analytics/predict/{product_id}", response_model=DemandForecastResponse)
+class StatsResponse(BaseModel):
+    total_stock_value: float
+    total_products: int
+    low_stock_count: int
+    stock_value_currency: str = "€"
+
+@app.get("/stats", response_model=StatsResponse)
+async def get_stats():
+    """
+    Récupère les statistiques globales pour le tableau de bord.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # 1. Valeur totale du stock
+        # Somme de (Quantité en stock * Coût unitaire du produit)
+        # Note: On prend le coût unitaire actuel du produit comme approximation
+        value_query = """
+            SELECT SUM(s."Quantity" * p."CostPrice") as total_value
+            FROM "Stocks" s
+            JOIN "Products" p ON s."ProductId" = p."Id"
+        """
+        cursor.execute(value_query)
+        value_result = cursor.fetchone()
+        total_value = float(value_result['total_value'] or 0)
+        
+        # 2. Nombre total de produits
+        product_count_query = """
+            SELECT COUNT(*) as count FROM "Products"
+        """
+        cursor.execute(product_count_query)
+        product_count = int(cursor.fetchone()['count'])
+        
+        # 3. Produits en rupture ou stock faible (Quantity <= ReorderPoint)
+        # On utilise le ReorderPoint s'il existe dans Stocks ou une valeur par défaut
+        low_stock_query = """
+            SELECT COUNT(*) as count
+            FROM "Stocks" s
+            WHERE s."Quantity" <= s."ReorderPoint"
+        """
+        cursor.execute(low_stock_query)
+        low_stock_count = int(cursor.fetchone()['count'])
+        
+        return StatsResponse(
+            total_stock_value=round(total_value, 2),
+            total_products=product_count,
+            low_stock_count=low_stock_count
+        )
+        
+    except Exception as e:
+        print(f"[ERROR] Erreur stats: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+        if conn:
+            conn.close()
+
+class SalesHistoryItem(BaseModel):
+    month: str
+    total_revenue: float
+    total_orders: int
+
+class LowStockItem(BaseModel):
+    id: int
+    product_name: str
+    product_code: str
+    current_stock: float
+    reorder_point: float
+    unit_cost: float
+
+class LowStockResponse(BaseModel):
+    items: List[LowStockItem]
+
+@app.get("/sales-history", response_model=List[SalesHistoryItem])
+async def get_sales_history():
+    """
+    Récupère l'historique des ventes (Chiffre d'affaires et volume) par mois pour les 6 derniers mois.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Requête pour grouper par mois les commandes validées
+        # On suppose que Orders a une colonne TotalAmount, sinon on calcule depuis OrderItems
+        query = """
+            SELECT 
+                TO_CHAR(o."OrderDate", 'YYYY-MM') as month,
+                SUM(o."TotalAmount") as total_revenue,
+                COUNT(o."Id") as total_orders
+            FROM "Orders" o
+            WHERE o."OrderDate" >= NOW() - INTERVAL '6 months'
+            GROUP BY TO_CHAR(o."OrderDate", 'YYYY-MM')
+            ORDER BY month ASC
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        history = []
+        for row in results:
+            history.append(SalesHistoryItem(
+                month=row['month'],
+                total_revenue=float(row['total_revenue'] or 0),
+                total_orders=int(row['total_orders'] or 0)
+            ))
+            
+        return history
+        
+    except Exception as e:
+        print(f"[ERROR] Erreur sales history: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+@app.get("/low-stock", response_model=LowStockResponse)
+async def get_low_stock():
+    """
+    Récupère la liste détaillée des produits en stock critique.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+            SELECT 
+                p."Id",
+                p."Name",
+                p."Code",
+                s."Quantity",
+                s."ReorderPoint",
+                p."CostPrice"
+            FROM "Stocks" s
+            JOIN "Products" p ON s."ProductId" = p."Id"
+            WHERE s."Quantity" <= s."ReorderPoint"
+            ORDER BY s."Quantity" ASC
+        """
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        items = []
+        for row in results:
+            items.append(LowStockItem(
+                id=row['Id'],
+                product_name=row['Name'],
+                product_code=row['Code'],
+                current_stock=float(row['Quantity'] or 0),
+                reorder_point=float(row['ReorderPoint'] or 0),
+                unit_cost=float(row['CostPrice'] or 0)
+            ))
+            
+        return LowStockResponse(items=items)
+        
+    except Exception as e:
+        print(f"[ERROR] Erreur low stock: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+@app.get("/predict/{product_id}", response_model=DemandForecastResponse)
 async def predict_demand(product_id: int):
     """
     Prévision de la demande pour un produit spécifique pour les 3 prochains mois.
@@ -343,7 +523,7 @@ async def predict_demand(product_id: int):
         if conn:
             conn.close()
 
-@app.get("/api/analytics/optimize/{product_id}")
+@app.get("/optimize/{product_id}")
 async def optimize_purchases(product_id: int):
     """
     Optimisation des achats pour un produit spécifique.

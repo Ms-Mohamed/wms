@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react';
-import { Box, VStack, Link, Text, useColorModeValue, Icon } from '@chakra-ui/react';
+import { Box, VStack, Link, Text, useColorModeValue } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, Link as RouterLink } from 'react-router-dom';
 import {
@@ -8,6 +8,9 @@ import {
   CubeIcon,
   ChartBarIcon,
   BeakerIcon,
+  TruckIcon,
+  ClipboardDocumentListIcon,
+  MapPinIcon,
 } from '@heroicons/react/24/outline';
 
 interface NavItem {
@@ -27,9 +30,13 @@ const Sidebar = memo(() => {
   const navItems: NavItem[] = useMemo(
     () => [
       { path: '/dashboard', label: t('nav.dashboard'), icon: HomeIcon },
+      { path: '/purchase-orders', label: 'Achats', icon: ClipboardDocumentListIcon }, // [NEW]
+      { path: '/sales-orders', label: 'Ventes', icon: ShoppingCartIcon },
       { path: '/orders', label: t('nav.orders'), icon: ShoppingCartIcon },
+      { path: '/suppliers', label: 'Fournisseurs', icon: TruckIcon }, // [NEW] Hardcoded label fallback
       { path: '/products', label: t('nav.products'), icon: CubeIcon },
       { path: '/stock', label: t('nav.stock'), icon: BeakerIcon },
+      { path: '/locations', label: 'Emplacements', icon: MapPinIcon }, // [NEW]
       { path: '/analytics', label: t('nav.analytics'), icon: ChartBarIcon },
     ],
     [t]

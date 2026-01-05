@@ -8,7 +8,20 @@ export interface Product {
   unitPrice: number;
   costPrice: number;
   unit: string;
+  defaultLocationId?: number;
   stockQuantity?: number;
+}
+
+export interface CreateProductDto {
+  code: string;
+  name: string;
+  description?: string;
+  unitPrice: number;
+  costPrice: number;
+  unit: string;
+  requiresLotTracking: boolean;
+  requiresSerialTracking: boolean;
+  defaultLocationId?: number;
 }
 
 export interface Order {
@@ -136,3 +149,91 @@ export interface Optimization {
   unit_cost: number;
 }
 
+export interface Supplier {
+  id: number;
+  name: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+}
+
+export interface PurchaseOrder {
+  id: number;
+  orderNumber: string;
+  supplierId: number;
+  supplier?: Supplier;
+  orderDate: string;
+  expectedDate?: string;
+  status: string;
+  notes?: string;
+  totalAmount: number;
+  items: PurchaseOrderItem[];
+}
+
+export interface PurchaseOrderItem {
+  id: number;
+  purchaseOrderId: number;
+  productId: number;
+  product?: Product;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface CreatePurchaseOrderDto {
+  supplierId: number;
+  expectedDate?: string;
+  notes?: string;
+  items: CreatePurchaseOrderItemDto[];
+}
+
+export interface CreatePurchaseOrderItemDto {
+  productId: number;
+  quantity: number;
+  unitCost: number;
+}
+
+export interface AnalyticsStats {
+  total_stock_value: number;
+  total_products: number;
+  low_stock_count: number;
+  stock_value_currency: string;
+}
+
+export interface SalesHistoryItem {
+  month: string;
+  total_revenue: number;
+  total_orders: number;
+}
+
+export interface LowStockItem {
+  id: number;
+  product_name: string;
+  product_code: string;
+  current_stock: number;
+  reorder_point: number;
+  unit_cost: number;
+}
+
+export interface LowStockResponse {
+  items: LowStockItem[];
+}
+
+
+export interface Location {
+  id: number;
+  warehouseId: number;
+  code: string;
+  name: string;
+  zone?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface CreateLocationDto {
+  code: string;
+  name: string;
+  zone?: string;
+  warehouseId: number;
+}

@@ -21,10 +21,8 @@ public class OrderService : IOrderService
 
         try
         {
-            // Générer le numéro de commande
             var orderNumber = await GenerateOrderNumberAsync();
 
-            // Créer la commande
             var order = new Order
             {
                 OrderNumber = orderNumber,
@@ -33,16 +31,14 @@ public class OrderService : IOrderService
                 CustomerAddress = createOrderDto.CustomerAddress,
                 TaxRate = createOrderDto.TaxRate,
                 Notes = createOrderDto.Notes,
-                Status = OrderStatus.Confirmed,
+                Status = OrderStatus.Pending, // Changed to Pending
                 OrderDate = DateTime.UtcNow
             };
 
             decimal subTotal = 0;
 
-            // Traiter chaque ligne de commande
             foreach (var itemDto in createOrderDto.Items)
             {
-                // Vérifier le produit
                 var product = await _context.Products
                     .FirstOrDefaultAsync(p => p.Id == itemDto.ProductId);
 
@@ -51,30 +47,13 @@ public class OrderService : IOrderService
                     throw new ArgumentException($"Produit avec ID {itemDto.ProductId} introuvable");
                 }
 
-                // Vérifier le stock disponible
-                var stock = await _context.Stocks
-                    .Include(s => s.Product)
-                    .Include(s => s.Warehouse)
-                    .FirstOrDefaultAsync(s => s.ProductId == itemDto.ProductId && s.WarehouseId == itemDto.WarehouseId);
+                // Removed strict stock validation here since we will validate at shipment
+                // Removed stock deduction logic
+                // Removed StockMovement creation
 
-                if (stock == null || stock.AvailableQuantity < itemDto.Quantity)
-                {
-                    var availableQty = stock?.AvailableQuantity ?? 0;
-                    throw new InsufficientStockException(
-                        itemDto.ProductId,
-                        product.Code,
-                        itemDto.Quantity,
-                        availableQty
-                    );
-                }
-
-                // Calculer le prix unitaire (utiliser celui fourni ou celui du produit)
                 var unitPrice = itemDto.UnitPrice ?? product.UnitPrice;
-
-                // Calculer le total de la ligne
                 var lineTotal = (itemDto.Quantity * unitPrice) - itemDto.Discount;
 
-                // Créer la ligne de commande
                 var orderItem = new OrderItem
                 {
                     Order = order,
@@ -82,47 +61,90 @@ public class OrderService : IOrderService
                     WarehouseId = itemDto.WarehouseId,
                     Quantity = itemDto.Quantity,
                     UnitPrice = unitPrice,
-                    UnitPriceAtSale = unitPrice, // Prix au moment de la vente
+                    UnitPriceAtSale = unitPrice,
                     Discount = itemDto.Discount,
                     LineTotal = lineTotal
                 };
 
                 order.Items.Add(orderItem);
                 subTotal += lineTotal;
-
-                // Décrémenter le stock (dans la transaction)
-                stock.Quantity -= itemDto.Quantity;
-                stock.LastUpdated = DateTime.UtcNow;
-
-                // Enregistrer le mouvement de stock
-                var movement = new StockMovement
-                {
-                    StockId = stock.Id,
-                    Type = MovementType.Outbound,
-                    Quantity = itemDto.Quantity,
-                    UnitCost = stock.AverageCost,
-                    Reference = orderNumber,
-                    Notes = $"Vente - Commande {orderNumber}"
-                };
-
-                _context.StockMovements.Add(movement);
             }
 
-            // Calculer les totaux
             order.SubTotal = subTotal;
             order.TaxAmount = subTotal * order.TaxRate;
             order.TotalAmount = order.SubTotal + order.TaxAmount;
 
-            // Sauvegarder la commande
             _context.Orders.Add(order);
             await _context.SaveChangesAsync();
 
-            // Créer automatiquement la facture
-            await CreateInvoiceForOrderAsync(order.Id);
+            // Invoice creation removed from here (moved to shipment)
 
             await transaction.CommitAsync();
 
             return await GetOrderByIdAsync(order.Id) ?? throw new Exception("Erreur lors de la récupération de la commande créée");
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<OrderDto> ShipOrderAsync(int orderId, ShipOrderDto shipOrderDto)
+    {
+        using var transaction = await _context.Database.BeginTransactionAsync();
+
+        try
+        {
+            var order = await _context.Orders
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.Id == orderId);
+
+            if (order == null) throw new ArgumentException("Order not found");
+            if (order.Status == OrderStatus.Shipped || order.Status == OrderStatus.Delivered)
+                throw new InvalidOperationException("Order is already shipped");
+
+            foreach (var shipItem in shipOrderDto.Items)
+            {
+                var orderItem = order.Items.FirstOrDefault(i => i.Id == shipItem.OrderItemId);
+                if (orderItem == null) continue;
+
+                // Find stock in the specified location
+                var stock = await _context.Stocks
+                    .FirstOrDefaultAsync(s => s.ProductId == orderItem.ProductId && s.LocationId == shipItem.LocationId);
+
+                if (stock == null || stock.AvailableQuantity < shipItem.Quantity)
+                {
+                    throw new InsufficientStockException(orderItem.ProductId, "Unknown", shipItem.Quantity, stock?.AvailableQuantity ?? 0);
+                }
+
+                // Deduct Stock
+                stock.Quantity -= shipItem.Quantity;
+                stock.LastUpdated = DateTime.UtcNow;
+
+                // Create Movement
+                var movement = new StockMovement
+                {
+                    StockId = stock.Id,
+                    Type = MovementType.Outbound,
+                    Quantity = shipItem.Quantity,
+                    UnitCost = stock.AverageCost,
+                    Reference = order.OrderNumber,
+                    Notes = $"Shipment - Order {order.OrderNumber}"
+                };
+                _context.StockMovements.Add(movement);
+            }
+
+            order.Status = OrderStatus.Shipped;
+            order.ShippedDate = DateTime.UtcNow;
+            
+            await _context.SaveChangesAsync();
+
+            await CreateInvoiceForOrderAsync(order.Id);
+
+            await transaction.CommitAsync();
+
+            return await GetOrderByIdAsync(order.Id) ?? throw new Exception("Error retrieving updated order");
         }
         catch
         {

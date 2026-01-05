@@ -1,9 +1,12 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WMS.Data;
+using WMS.Data.Entities;
 
 namespace WMS.API.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class WarehousesController : ControllerBase

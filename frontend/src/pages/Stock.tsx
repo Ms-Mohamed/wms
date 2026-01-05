@@ -48,6 +48,7 @@ const Stock = memo(() => {
               <Th>{t('products.code')}</Th>
               <Th>{t('products.name')}</Th>
               <Th>{t('stock.warehouse')}</Th>
+              <Th>Emplacement</Th>
               <Th>{t('stock.available')}</Th>
               <Th>{t('stock.reserved')}</Th>
               <Th>{t('stock.reorderPoint')}</Th>
@@ -62,6 +63,7 @@ const Stock = memo(() => {
                   <Td>{stock.productCode}</Td>
                   <Td>{stock.productName}</Td>
                   <Td>{stock.warehouseName}</Td>
+                  <Td>{stock.locationName || '-'}</Td>
                   <Td>{stock.availableQuantity.toFixed(2)}</Td>
                   <Td>{stock.reservedQuantity.toFixed(2)}</Td>
                   <Td>{stock.reorderPoint.toFixed(2)}</Td>

@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useMemo } from 'react';
+import { memo, useState, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -29,7 +29,7 @@ import {
 } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ordersApi, productsApi, warehousesApi } from '../services/api';
+import { ordersApi, productsApi, warehousesApi, stockApi } from '../services/api';
 import type { CreateOrderDto } from '../types';
 import { useNavigate } from 'react-router-dom';
 
@@ -72,9 +72,15 @@ const Orders = memo(() => {
     queryFn: () => warehousesApi.getAll().then(res => res.data),
   });
 
+  const { data: stocks } = useQuery({
+    queryKey: ['stocks'],
+    queryFn: () => stockApi.getAll().then(res => res.data),
+    enabled: isOpen,
+  });
+
   const createOrderMutation = useMutation({
     mutationFn: (data: CreateOrderDto) => ordersApi.create(data).then(res => res.data),
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       toast({
         title: t('common.success'),
@@ -83,7 +89,6 @@ const Orders = memo(() => {
         duration: 3000,
       });
       onClose();
-      navigate(`/invoices/${data.id}`);
     },
     onError: (error: any) => {
       toast({
@@ -102,8 +107,20 @@ const Orders = memo(() => {
   const handleItemChange = useCallback((index: number, field: keyof OrderItemForm, value: any) => {
     const newItems = [...orderItems];
     newItems[index] = { ...newItems[index], [field]: value };
+
+    // Stock validation
+    if (field === 'quantity' || field === 'productId' || field === 'warehouseId') {
+      const item = newItems[index];
+      if (item.productId && item.warehouseId) {
+        const stock = stocks?.find(s => s.productId === item.productId && s.warehouseId === item.warehouseId);
+        const max = stock ? (stock.availableQuantity ?? 0) : 0;
+        if (item.quantity > max) {
+          newItems[index].quantity = max;
+        }
+      }
+    }
     setOrderItems(newItems);
-  }, [orderItems]);
+  }, [orderItems, stocks]);
 
   const handleRemoveItem = useCallback((index: number) => {
     setOrderItems(orderItems.filter((_, i) => i !== index));
@@ -182,13 +199,15 @@ const Orders = memo(() => {
                 <Td>{getStatusBadge(order.status)}</Td>
                 <Td>{order.totalAmount.toFixed(2)} €</Td>
                 <Td>
-                  <Link
-                    color="blue.500"
-                    onClick={() => navigate(`/invoices/${order.id}`)}
-                    cursor="pointer"
-                  >
-                    {t('orders.viewInvoice')}
-                  </Link>
+                  {['shipped', 'delivered'].includes(order.status.toLowerCase()) && (
+                    <Link
+                      color="blue.500"
+                      onClick={() => navigate(`/invoices/${order.id}`)}
+                      cursor="pointer"
+                    >
+                      {t('orders.viewInvoice')}
+                    </Link>
+                  )}
                 </Td>
               </Tr>
             ))}
@@ -267,11 +286,19 @@ const Orders = memo(() => {
                       </FormControl>
 
                       <FormControl w="120px">
-                        <FormLabel>{t('orders.quantity')}</FormLabel>
+                        <FormLabel>
+                          {t('orders.quantity')}
+                          {item.productId && item.warehouseId && (
+                            <span style={{ fontSize: '0.7em', color: 'gray', marginLeft: '4px' }}>
+                              (max: {stocks?.find(s => s.productId === item.productId && s.warehouseId === item.warehouseId)?.availableQuantity ?? 0})
+                            </span>
+                          )}
+                        </FormLabel>
                         <NumberInput
                           value={item.quantity}
                           onChange={(_, val) => handleItemChange(index, 'quantity', val)}
                           min={1}
+                          max={stocks?.find(s => s.productId === item.productId && s.warehouseId === item.warehouseId)?.availableQuantity ?? 9999}
                         >
                           <NumberInputField />
                         </NumberInput>

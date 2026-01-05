@@ -14,6 +14,9 @@ public class Product
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    public int? DefaultLocationId { get; set; }
+    public Location? DefaultLocation { get; set; }
+
     // Navigation properties
     public ICollection<Stock> Stocks { get; set; } = new List<Stock>();
     public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();

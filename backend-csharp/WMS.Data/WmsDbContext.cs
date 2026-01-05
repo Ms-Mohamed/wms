@@ -10,6 +10,12 @@ public class WmsDbContext : DbContext
     }
 
     public DbSet<Customer> Customers { get; set; }
+    public DbSet<User> Users { get; set; }
+    public DbSet<Supplier> Suppliers { get; set; }
+    public DbSet<PurchaseOrder> PurchaseOrders { get; set; }
+    public DbSet<PurchaseOrderItem> PurchaseOrderItems { get; set; }
+    public DbSet<ReturnOrder> ReturnOrders { get; set; } // [NEW]
+    public DbSet<ReturnOrderItem> ReturnOrderItems { get; set; } // [NEW]
     public DbSet<Product> Products { get; set; }
     public DbSet<Warehouse> Warehouses { get; set; }
     public DbSet<Location> Locations { get; set; }

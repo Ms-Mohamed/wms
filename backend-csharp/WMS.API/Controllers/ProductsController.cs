@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
+using Microsoft.AspNetCore.Authorization;
 using WMS.API.Resources;
 using WMS.Business.DTOs;
 using WMS.Data;
@@ -8,6 +9,7 @@ using WMS.Data.Entities;
 
 namespace WMS.API.Controllers;
 
+[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class ProductsController : ControllerBase
@@ -42,6 +44,7 @@ public class ProductsController : ControllerBase
                     p.Unit,
                     p.RequiresLotTracking,
                     p.RequiresSerialTracking,
+                    p.DefaultLocationId,
                     StockQuantity = p.Stocks != null ? p.Stocks.Sum(s => s.Quantity) : 0
                 })
                 .ToListAsync();
@@ -78,6 +81,7 @@ public class ProductsController : ControllerBase
             product.Unit,
             product.RequiresLotTracking,
             product.RequiresSerialTracking,
+            product.DefaultLocationId,
             StockQuantity = product.Stocks.Sum(s => s.Quantity),
             Stocks = product.Stocks.Select(s => new
             {
@@ -116,6 +120,7 @@ public class ProductsController : ControllerBase
             Unit = createProductDto.Unit,
             RequiresLotTracking = createProductDto.RequiresLotTracking,
             RequiresSerialTracking = createProductDto.RequiresSerialTracking,
+            DefaultLocationId = createProductDto.DefaultLocationId > 0 ? createProductDto.DefaultLocationId : null,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -134,7 +139,8 @@ public class ProductsController : ControllerBase
             product.CostPrice,
             product.Unit,
             product.RequiresLotTracking,
-            product.RequiresSerialTracking
+            product.RequiresSerialTracking,
+            product.DefaultLocationId
         });
     }
 
@@ -183,6 +189,9 @@ public class ProductsController : ControllerBase
             product.RequiresLotTracking = updateProductDto.RequiresLotTracking.Value;
         if (updateProductDto.RequiresSerialTracking.HasValue)
             product.RequiresSerialTracking = updateProductDto.RequiresSerialTracking.Value;
+        
+        if (updateProductDto.DefaultLocationId.HasValue)
+            product.DefaultLocationId = updateProductDto.DefaultLocationId.Value > 0 ? updateProductDto.DefaultLocationId : null;
 
         product.UpdatedAt = DateTime.UtcNow;
 
@@ -200,7 +209,8 @@ public class ProductsController : ControllerBase
             product.CostPrice,
             product.Unit,
             product.RequiresLotTracking,
-            product.RequiresSerialTracking
+            product.RequiresSerialTracking,
+            product.DefaultLocationId
         });
     }
 

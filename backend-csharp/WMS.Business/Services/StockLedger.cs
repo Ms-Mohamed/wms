@@ -72,10 +72,6 @@ public class StockLedger : IStockLedger
                     required = doc.RootElement.GetProperty("required").GetDecimal();
                     available = doc.RootElement.GetProperty("available").GetDecimal();
                 }
-                else
-                {
-                    throw new Exception("EX.DETAIL IS: " + ex.Detail);
-                }
             }
             throw new InsufficientStockException(productId, productId.ToString(), required, available);
         }

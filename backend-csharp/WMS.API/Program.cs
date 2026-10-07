@@ -88,6 +88,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddScoped<IStockLedger, StockLedger>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+builder.Services.AddHostedService<WMS.API.Services.IdempotencyCleanupService>();
 
 var app = builder.Build();
 

@@ -170,6 +170,27 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         Assert.Equal(40, orders.Select(o => o.OrderNumber).Distinct().Count());
     }
 
+    [Fact]
+    public async Task IdempotencyCleanupService_DeletesExpiredKeys()
+    {
+        await using var db = _pg.NewContext();
+        await db.Database.ExecuteSqlRawAsync("INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"CreatedAt\") VALUES ('old-key', 'order.create', now() - interval '8 days') ON CONFLICT DO NOTHING");
+        await db.Database.ExecuteSqlRawAsync("INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"CreatedAt\") VALUES ('new-key', 'order.create', now()) ON CONFLICT DO NOTHING");
+        
+        var serviceProvider = _services.CreateScope().ServiceProvider;
+        var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<WMS.API.Services.IdempotencyCleanupService>();
+        var cleanupService = new WMS.API.Services.IdempotencyCleanupService(serviceProvider, logger);
+        
+        var cts = new CancellationTokenSource();
+        cts.CancelAfter(500); 
+        
+        try { await cleanupService.StartAsync(cts.Token); } catch {}
+        await Task.Delay(100);
+        
+        Assert.Equal(0, await db.Database.SqlQuery<int>($"SELECT COUNT(*)::int AS \"Value\" FROM \"IdempotencyKeys\" WHERE \"Key\" = 'old-key'").FirstOrDefaultAsync());
+        Assert.Equal(1, await db.Database.SqlQuery<int>($"SELECT COUNT(*)::int AS \"Value\" FROM \"IdempotencyKeys\" WHERE \"Key\" = 'new-key'").FirstOrDefaultAsync());
+    }
+
     // ---- ledger & CUMP via the C# service -----------------------------------------------------
     [Fact]
     public async Task Ledger_service_keeps_average_cost_and_reconciles()

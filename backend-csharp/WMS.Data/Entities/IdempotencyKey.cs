@@ -5,6 +5,7 @@ public class IdempotencyKey
 {
     public string Key { get; set; } = string.Empty;
     public string Scope { get; set; } = string.Empty;
+    public string? RequestHash { get; set; }
     public int? ResourceId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

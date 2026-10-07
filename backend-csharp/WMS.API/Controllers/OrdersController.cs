@@ -31,11 +31,20 @@ public class OrdersController : ControllerBase
     {
         try
         {
-            var order = await _orderService.CreateOrderAsync(createOrderDto, idempotencyKey, ct);
+            string? requestHash = null;
+            if (!string.IsNullOrWhiteSpace(idempotencyKey))
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(createOrderDto);
+                using var sha256 = System.Security.Cryptography.SHA256.Create();
+                var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(json));
+                requestHash = Convert.ToBase64String(hashBytes);
+            }
+            var order = await _orderService.CreateOrderAsync(createOrderDto, idempotencyKey, requestHash, ct);
             return CreatedAtAction(nameof(GetOrder), new { id = order.Id }, order);
         }
         catch (ArgumentException ex)
         {
+            if (ex.Message.Contains("Idempotency key reused")) return UnprocessableEntity(new { error = ex.Message });
             return BadRequest(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)

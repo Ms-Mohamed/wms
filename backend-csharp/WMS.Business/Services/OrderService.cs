@@ -17,7 +17,7 @@ public class OrderService : IOrderService
         _ledger = ledger;
     }
 
-    public async Task<OrderDto> CreateOrderAsync(CreateOrderDto dto, string? idempotencyKey = null, CancellationToken ct = default)
+    public async Task<OrderDto> CreateOrderAsync(CreateOrderDto dto, string? idempotencyKey = null, string? requestHash = null, CancellationToken ct = default)
     {
         if (dto.Items == null || dto.Items.Count == 0)
             throw new ArgumentException("Une commande doit contenir au moins un article");
@@ -31,14 +31,19 @@ public class OrderService : IOrderService
             // If a concurrent request with the same key is still running, this INSERT waits for it to
             // commit and then inserts nothing: we return the order it created.
             var inserted = await _context.Database.ExecuteSqlInterpolatedAsync(
-                $"INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"CreatedAt\") VALUES ({idempotencyKey}, 'order.create', now()) ON CONFLICT (\"Key\") DO NOTHING", ct);
+                $"INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"RequestHash\", \"CreatedAt\") VALUES ({idempotencyKey}, 'order.create', {requestHash}, now()) ON CONFLICT (\"Key\") DO NOTHING", ct);
             if (inserted == 0)
             {
-                var existing = (await _context.Database.SqlQuery<int>(
-                    $"SELECT COALESCE(\"ResourceId\", 0) AS \"Value\" FROM \"IdempotencyKeys\" WHERE \"Key\" = {idempotencyKey}")
-                    .ToListAsync(ct)).FirstOrDefault();
-                if (existing > 0)
-                    return await GetOrderByIdAsync(existing, ct) ?? throw new InvalidOperationException("Commande introuvable");
+                var existing = await _context.Database.SqlQuery<WMS.Data.Entities.IdempotencyKey>(
+                    $"SELECT * FROM \"IdempotencyKeys\" WHERE \"Key\" = {idempotencyKey}")
+                    .FirstOrDefaultAsync(ct);
+                if (existing != null)
+                {
+                    if (existing.RequestHash != null && existing.RequestHash != requestHash)
+                        throw new ArgumentException("Idempotency key reused with different request body");
+                    if (existing.ResourceId > 0)
+                        return await GetOrderByIdAsync(existing.ResourceId.Value, ct) ?? throw new InvalidOperationException("Commande introuvable");
+                }
                 throw new InvalidOperationException("Une requête avec cette clé d'idempotence est déjà en cours");
             }
         }

@@ -28,6 +28,9 @@ ALTER TABLE "StockMovements" ALTER COLUMN "UnitCost"    TYPE numeric(18,4);
 -- ---------------------------------------------------------------------------
 ALTER TABLE "StockMovements" ADD COLUMN IF NOT EXISTS "Delta" numeric(18,3);
 
+-- Also ensure RequestHash is added to IdempotencyKeys to avoid migration issues
+ALTER TABLE "IdempotencyKeys" ADD COLUMN IF NOT EXISTS "RequestHash" text;
+
 -- Legacy rows: Inbound(0)=+Q, Outbound(1)=-Q, Transfer(2)=Q as stored (it was
 -- already signed), Adjustment(3)=sign was never stored -> 0, fixed by the
 -- opening-balance rows below.

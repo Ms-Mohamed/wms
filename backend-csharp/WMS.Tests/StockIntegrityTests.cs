@@ -131,11 +131,33 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         var (productId, warehouseId, _, _) = await _pg.SeedStockAsync(5);
         var key = Guid.NewGuid().ToString();
 
-        var created = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => CreateOrderAsync(productId, warehouseId, 1, key)));
+        // Use same hash for all
+        var s = _services.CreateScope().ServiceProvider.GetRequiredService<WMS.Business.Services.IOrderService>();
+        var dto = new CreateOrderDto { CustomerName = "Test", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 1 } } };
+        var requestHash = "hashA";
+
+        var created = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => s.CreateOrderAsync(dto, key, requestHash)));
 
         Assert.Single(created.Select(o => o.Id).Distinct());
         await using var db = _pg.NewContext();
         Assert.Equal(1, await db.Orders.CountAsync(o => o.Items.Any(i => i.ProductId == productId)));
+    }
+
+    [Fact]
+    public async Task Idempotency_key_with_different_body_throws()
+    {
+        var (productId, warehouseId, _, _) = await _pg.SeedStockAsync(5);
+        var key = Guid.NewGuid().ToString();
+
+        var s = _services.CreateScope().ServiceProvider.GetRequiredService<WMS.Business.Services.IOrderService>();
+        var dto1 = new CreateOrderDto { CustomerName = "Test", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 1 } } };
+        
+        await s.CreateOrderAsync(dto1, key, "hash1");
+
+        var dto2 = new CreateOrderDto { CustomerName = "Test2", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 2 } } };
+        
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => s.CreateOrderAsync(dto2, key, "hash2"));
+        Assert.Contains("Idempotency key reused with different request body", ex.Message);
     }
 
     [Fact]

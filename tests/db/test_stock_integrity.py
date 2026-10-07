@@ -408,3 +408,18 @@ def test_property_random_operations_keep_ledger_equal_to_stock(db):
     [t.join() for t in ts]
     assert drift(db) == []
     assert one(db, 'SELECT min("Quantity") FROM "Stocks"')[0] >= 0
+
+def test_idempotency_keys_enforce_unique_key(db):
+    apply_layer(db)
+    # The migration we just added adds RequestHash
+    # And IdempotencyKeys has a UNIQUE index on "Key"
+    db.execute("""
+        INSERT INTO "IdempotencyKeys" ("Key", "Scope", "RequestHash", "CreatedAt")
+        VALUES ('test-key-1', 'order.create', 'hash1', now())
+    """)
+    
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        db.execute("""
+            INSERT INTO "IdempotencyKeys" ("Key", "Scope", "RequestHash", "CreatedAt")
+            VALUES ('test-key-1', 'order.create', 'hash2', now())
+        """)

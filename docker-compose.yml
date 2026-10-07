@@ -94,6 +94,60 @@ services:
     cpus: 0.25
     networks: [wms-network]
 
+  test-dotnet:
+    build:
+      context: ./backend-csharp
+    profiles: [test]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=wms_test;Username=postgres;Password=${POSTGRES_PASSWORD:-test};Include Error Detail=true
+      JwtSettings__SecretKey: ${JWT_SECRET:-test_secret_key_32_chars_long}
+      WMS_ADMIN_PASSWORD: ${WMS_ADMIN_PASSWORD:-admin}
+    command: ["dotnet", "test", "WMS.Tests"]
+    networks: [wms-network]
+
+  test-python-db:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        WORKDIR /app
+        COPY . .
+        RUN pip install psycopg[binary] pytest
+        CMD ["pytest", "tests/db"]
+    profiles: [test]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WMS_TEST_CONNECTION: host=db port=5432 dbname=wms_test user=postgres password=${POSTGRES_PASSWORD:-test}
+    networks: [wms-network]
+
+  test-python-api:
+    build:
+      context: ./backend-python
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        WORKDIR /app
+        COPY requirements.txt .
+        RUN pip install -r requirements.txt pytest httpx
+        COPY . .
+        CMD ["pytest", "tests/"]
+    profiles: [test]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: wms_test
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-test}
+      JWT_SECRET: ${JWT_SECRET:-test_secret_key_32_chars_long}
+    networks: [wms-network]
+
 networks:
   wms-network:
     driver: bridge

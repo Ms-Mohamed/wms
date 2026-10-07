@@ -12,7 +12,7 @@ COPY WMS.API/ WMS.API/
 COPY WMS.Business/ WMS.Business/
 COPY WMS.Data/ WMS.Data/
 WORKDIR /src/WMS.API
-RUN dotnet publish -c Release -o /app/publish --no-restore /p:UseAppHost=false
+RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
 
 # Runtime stage (non-root)
 FROM mcr.microsoft.com/dotnet/aspnet:8.0

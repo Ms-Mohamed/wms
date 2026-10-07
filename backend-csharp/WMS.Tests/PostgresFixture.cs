@@ -3,6 +3,7 @@ using Npgsql;
 using WMS.Business.Services;
 using WMS.Data;
 using WMS.Data.Entities;
+using Xunit;
 
 namespace WMS.Tests;
 
@@ -31,7 +32,7 @@ public class PostgresFixture : IAsyncLifetime
             await cmd.ExecuteNonQueryAsync();
         }
 
-        var csb = new NpgsqlConnectionStringBuilder(_adminConnection) { Database = _dbName, MaxPoolSize = 200 };
+        var csb = new NpgsqlConnectionStringBuilder(_adminConnection) { Database = _dbName, MaxPoolSize = 200, IncludeErrorDetail = true };
         ConnectionString = csb.ConnectionString;
 
         await using var db = NewContext();

@@ -4,6 +4,7 @@ using WMS.API.Controllers;
 using WMS.Business.DTOs;
 using WMS.Business.Exceptions;
 using WMS.Data.Entities;
+using Xunit;
 
 namespace WMS.Tests;
 

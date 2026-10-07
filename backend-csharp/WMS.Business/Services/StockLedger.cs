@@ -64,10 +64,18 @@ public class StockLedger : IStockLedger
             int productId = 0; decimal required = 0, available = 0;
             if (!string.IsNullOrEmpty(ex.Detail))
             {
-                using var doc = JsonDocument.Parse(ex.Detail);
-                productId = doc.RootElement.GetProperty("productId").GetInt32();
-                required = doc.RootElement.GetProperty("required").GetDecimal();
-                available = doc.RootElement.GetProperty("available").GetDecimal();
+                int startIdx = ex.Detail.IndexOf('{');
+                if (startIdx >= 0)
+                {
+                    using var doc = JsonDocument.Parse(ex.Detail.Substring(startIdx));
+                    productId = doc.RootElement.GetProperty("productId").GetInt32();
+                    required = doc.RootElement.GetProperty("required").GetDecimal();
+                    available = doc.RootElement.GetProperty("available").GetDecimal();
+                }
+                else
+                {
+                    throw new Exception("EX.DETAIL IS: " + ex.Detail);
+                }
             }
             throw new InsufficientStockException(productId, productId.ToString(), required, available);
         }

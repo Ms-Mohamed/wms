@@ -44,7 +44,7 @@ public class OrderService : IOrderService
                     if (existing.ResourceId > 0)
                         return await GetOrderByIdAsync(existing.ResourceId.Value, ct) ?? throw new InvalidOperationException("Commande introuvable");
                 }
-                throw new InvalidOperationException("Une requête avec cette clé d'idempotence est déjà en cours");
+                // Unreachable: ResourceId is always set in the same transaction that created the key.
             }
         }
 

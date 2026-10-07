@@ -1,10 +1,10 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
 using WMS.API.Resources;
 using WMS.Business.DTOs;
 using WMS.Business.Exceptions;
 using WMS.Business.Services;
-using Microsoft.AspNetCore.Authorization;
 
 namespace WMS.API.Controllers;
 
@@ -24,24 +24,23 @@ public class OrdersController : ControllerBase
         _localizer = localizer;
     }
 
+    /// <summary>Send an "Idempotency-Key" header so a network retry never creates a second order.</summary>
     [HttpPost]
-    public async Task<ActionResult<OrderDto>> CreateOrder([FromBody] CreateOrderDto createOrderDto)
+    public async Task<ActionResult<OrderDto>> CreateOrder([FromBody] CreateOrderDto createOrderDto,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken ct)
     {
         try
         {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var order = await _orderService.CreateOrderAsync(createOrderDto);
+            var order = await _orderService.CreateOrderAsync(createOrderDto, idempotencyKey, ct);
             return CreatedAtAction(nameof(GetOrder), new { id = order.Id }, order);
         }
-        catch (InsufficientStockException ex)
+        catch (ArgumentException ex)
         {
-            _logger.LogWarning(ex, "Stock insuffisant pour la commande");
-            var errorMessage = _localizer["InsufficientStock", ex.ProductCode, ex.RequiredQuantity, ex.AvailableQuantity];
-            return BadRequest(new { error = errorMessage.Value, productId = ex.ProductId, productCode = ex.ProductCode, requiredQuantity = ex.RequiredQuantity, availableQuantity = ex.AvailableQuantity });
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -52,18 +51,24 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost("{id}/ship")]
-    public async Task<ActionResult<OrderDto>> ShipOrder(int id, [FromBody] ShipOrderDto shipOrderDto)
+    public async Task<ActionResult<OrderDto>> ShipOrder(int id, [FromBody] ShipOrderDto shipOrderDto, CancellationToken ct)
     {
         try
         {
-            var order = await _orderService.ShipOrderAsync(id, shipOrderDto);
+            var order = await _orderService.ShipOrderAsync(id, shipOrderDto, ct);
             return Ok(order);
         }
         catch (InsufficientStockException ex)
         {
             _logger.LogWarning(ex, "Stock insuffisant pour l'expédition");
-             // Using a generic error message for now as localizer might need parameters adjustment
-            return BadRequest(new { error = "Stock insuffisant", productId = ex.ProductId, requiredQuantity = ex.RequiredQuantity, availableQuantity = ex.AvailableQuantity });
+            return Conflict(new
+            {
+                error = "Stock insuffisant",
+                productId = ex.ProductId,
+                productCode = ex.ProductCode,
+                requiredQuantity = ex.RequiredQuantity,
+                availableQuantity = ex.AvailableQuantity
+            });
         }
         catch (ArgumentException ex)
         {
@@ -81,9 +86,9 @@ public class OrdersController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<OrderDto>> GetOrder(int id)
+    public async Task<ActionResult<OrderDto>> GetOrder(int id, CancellationToken ct)
     {
-        var order = await _orderService.GetOrderByIdAsync(id);
+        var order = await _orderService.GetOrderByIdAsync(id, ct);
         if (order == null)
         {
             return NotFound();
@@ -91,19 +96,20 @@ public class OrdersController : ControllerBase
         return Ok(order);
     }
 
+    /// <summary>Paged: ?page=1&amp;pageSize=500 (default and max 500). Total in the X-Total-Count header.</summary>
     [HttpGet]
-    public async Task<ActionResult<List<OrderDto>>> GetAllOrders()
+    public async Task<ActionResult<List<OrderDto>>> GetAllOrders([FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
     {
         try
         {
-            var orders = await _orderService.GetAllOrdersAsync();
-            return Ok(orders);
+            var result = await _orderService.GetOrdersAsync(page, pageSize, ct);
+            Response.Headers["X-Total-Count"] = result.TotalCount.ToString();
+            return Ok(result.Items);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de la récupération des commandes");
-            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des commandes", details = ex.Message });
+            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des commandes" });
         }
     }
 }
-

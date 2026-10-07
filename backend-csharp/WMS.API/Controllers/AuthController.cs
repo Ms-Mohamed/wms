@@ -26,6 +26,8 @@ public class AuthController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>Only an Admin can create accounts (self-registration used to give anyone full access).</summary>
+    [Authorize(Roles = "Admin")]
     [HttpPost("register")]
     public async Task<ActionResult<User>> Register(RegisterDto request)
     {
@@ -48,19 +50,16 @@ public class AuthController : ControllerBase
         return Ok(new { message = "Inscription réussie", userId = user.Id });
     }
 
+    [AllowAnonymous]
     [HttpPost("login")]
     public async Task<ActionResult<string>> Login(LoginDto request)
     {
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
 
-        if (user == null)
+        // same answer for "unknown user" and "wrong password": no account enumeration
+        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
         {
-            return BadRequest("Utilisateur non trouvé.");
-        }
-
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-        {
-            return BadRequest("Mot de passe incorrect.");
+            return BadRequest("Identifiants invalides.");
         }
 
         string token = CreateToken(user);
@@ -76,14 +75,15 @@ public class AuthController : ControllerBase
             new Claim("id", user.Id.ToString())
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
-            _configuration.GetSection("JwtSettings:SecretKey").Value ?? "SuperSecretKeyForDevelopmentOnly123!"));
+        var secret = _configuration["JwtSettings:SecretKey"]
+            ?? throw new InvalidOperationException("JwtSettings:SecretKey is not configured");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
 
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256Signature);
 
         var token = new JwtSecurityToken(
             claims: claims,
-            expires: DateTime.Now.AddDays(1),
+            expires: DateTime.UtcNow.AddHours(8),
             signingCredentials: creds
         );
 

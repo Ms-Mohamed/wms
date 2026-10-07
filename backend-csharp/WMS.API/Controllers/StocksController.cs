@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using WMS.Business.DTOs;
 using WMS.Data;
 
 namespace WMS.API.Controllers;
@@ -19,15 +20,20 @@ public class StocksController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>Paged: ?page=1&amp;pageSize=500 (default and max 500). Total in the X-Total-Count header.</summary>
     [HttpGet]
-    public async Task<ActionResult> GetAllStocks()
+    public async Task<ActionResult> GetAllStocks([FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
     {
         try
         {
-            var stocks = await _context.Stocks
-                .Include(s => s.Product)
-                .Include(s => s.Warehouse)
-                .Include(s => s.Location)
+            var (p, size) = Paging.Normalize(page, pageSize);
+
+            var query = _context.Stocks.AsNoTracking();
+            Response.Headers["X-Total-Count"] = (await query.CountAsync(ct)).ToString();
+
+            var stocks = await query
+                .OrderBy(s => s.Id)
+                .Skip((p - 1) * size).Take(size)
                 .Select(s => new
                 {
                     s.Id,
@@ -40,19 +46,19 @@ public class StocksController : ControllerBase
                     LocationName = s.Location != null ? s.Location.Name : null,
                     s.Quantity,
                     s.ReservedQuantity,
-                    s.AvailableQuantity,
+                    AvailableQuantity = s.Quantity - s.ReservedQuantity,
                     s.AverageCost,
                     s.ReorderPoint,
                     s.LastUpdated
                 })
-                .ToListAsync();
+                .ToListAsync(ct);
 
             return Ok(stocks);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de la récupération du stock");
-            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération du stock", details = ex.Message });
+            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération du stock" });
         }
     }
 

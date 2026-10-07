@@ -1,5 +1,20 @@
 # Performance Test Pack
 
+> **Start with `bench_analytics.py`** - it is the benchmark whose results are quoted in the root README
+> (original pandas service vs the rewritten one, same dataset, equivalence check + load).
+> `k6-load.js` below is a generic load script for the C# API; its "monolith" mode **substitutes** the
+> analytics scenario with heavy stock reads, so it is **not a like-for-like comparison** - do not quote its uplift.
+
+```bash
+psql -f ../backend-python/tests/schema_analytics.sql wms_bench
+psql -v products=100000 -v orders=1000000 -f seed_analytics_bench.sql wms_bench
+PGTZ=UTC DB_NAME=wms_bench python bench_analytics.py equivalence      # v1 (baseline_v1/) vs v2
+PGTZ=UTC DB_NAME=wms_bench python bench_analytics.py bench --version v2 --seconds 30 --threads 16 --mix product
+```
+`baseline_v1/` is the original service, kept only as the baseline (needs pandas/scikit-learn; use a separate virtualenv).
+
+---
+
 Scripts to benchmark the polyglot double-backend architecture (C# transactional API + Python analytics API) against a single-backend style run. The goal is to stress the system with large synthetic data and compare throughput/latency between:
 - **Polyglot mode**: transactional calls go to the C# API, analytics calls go to the Python API.
 - **Monolith baseline**: all calls are sent to the C# API (analytics scenario is substituted with heavy stock reads) to mimic an ordinary single-backend WMS.

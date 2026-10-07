@@ -26,6 +26,7 @@ public class WmsDbContext : DbContext
     public DbSet<OrderItem> OrderItems { get; set; }
     public DbSet<Invoice> Invoices { get; set; }
     public DbSet<InvoiceItem> InvoiceItems { get; set; }
+    public DbSet<IdempotencyKey> IdempotencyKeys { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -79,7 +80,8 @@ public class WmsDbContext : DbContext
             entity.HasIndex(e => new { e.ProductId, e.WarehouseId, e.LocationId }).IsUnique();
             entity.Property(e => e.Quantity).HasPrecision(18, 3);
             entity.Property(e => e.ReservedQuantity).HasPrecision(18, 3);
-            entity.Property(e => e.AverageCost).HasPrecision(18, 2);
+            entity.Ignore(e => e.AvailableQuantity);
+            entity.Property(e => e.AverageCost).HasPrecision(18, 4);
             entity.Property(e => e.ReorderPoint).HasPrecision(18, 3);
             entity.HasOne(e => e.Product)
                 .WithMany(p => p.Stocks)
@@ -100,7 +102,8 @@ public class WmsDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Quantity).HasPrecision(18, 3);
-            entity.Property(e => e.UnitCost).HasPrecision(18, 2);
+            entity.Property(e => e.Delta).HasPrecision(18, 3);
+            entity.Property(e => e.UnitCost).HasPrecision(18, 4);
             entity.HasOne(e => e.Stock)
                 .WithMany(s => s.Movements)
                 .HasForeignKey(e => e.StockId)
@@ -195,6 +198,14 @@ public class WmsDbContext : DbContext
                 .WithMany(p => p.InvoiceItems)
                 .HasForeignKey(e => e.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Idempotency keys (table created by Sql/stock_integrity.sql)
+        modelBuilder.Entity<IdempotencyKey>(entity =>
+        {
+            entity.ToTable("IdempotencyKeys");
+            entity.HasKey(e => e.Key);
+            entity.Property(e => e.Scope).IsRequired();
         });
     }
 }

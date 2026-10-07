@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using WMS.Business.Services;
 using WMS.Data;
 using WMS.Data.Entities;
 
@@ -12,11 +13,13 @@ namespace WMS.API.Controllers;
 public class ReturnsController : ControllerBase
 {
     private readonly WmsDbContext _context;
+    private readonly IStockLedger _ledger;
     private readonly ILogger<ReturnsController> _logger;
 
-    public ReturnsController(WmsDbContext context, ILogger<ReturnsController> logger)
+    public ReturnsController(WmsDbContext context, IStockLedger ledger, ILogger<ReturnsController> logger)
     {
         _context = context;
+        _ledger = ledger;
         _logger = logger;
     }
 
@@ -30,7 +33,7 @@ public class ReturnsController : ControllerBase
 
         var returnOrder = new ReturnOrder
         {
-            ReturnNumber = $"RMA-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 4).ToUpper()}",
+            ReturnNumber = await _ledger.NextNumberAsync("rma"),
             OrderId = dto.OrderId,
             Reason = dto.Reason,
             Status = ReturnStatus.Requested,
@@ -63,81 +66,60 @@ public class ReturnsController : ControllerBase
     }
 
     // POST: api/Returns/5/receive
+    /// <summary>Receives a customer return. Claimed atomically (cannot be received twice); good items go back to stock through the ledger.</summary>
     [HttpPost("{id}/receive")]
-    public async Task<IActionResult> ReceiveReturn(int id)
+    public async Task<IActionResult> ReceiveReturn(int id, CancellationToken ct)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
+        await using var transaction = await _context.Database.BeginTransactionAsync(ct);
         try
         {
-            var returnOrder = await _context.ReturnOrders
+            var returnOrder = await _context.ReturnOrders.AsNoTracking()
                 .Include(r => r.Items)
-                .FirstOrDefaultAsync(r => r.Id == id);
-
+                .FirstOrDefaultAsync(r => r.Id == id, ct);
             if (returnOrder == null) return NotFound();
 
-            if (returnOrder.Status == ReturnStatus.Received || returnOrder.Status == ReturnStatus.Refunded)
+            var claimed = await _context.Database.ExecuteSqlInterpolatedAsync(
+                $@"UPDATE ""ReturnOrders""
+                      SET ""Status"" = {(int)ReturnStatus.Received}, ""ReceivedDate"" = now(), ""UpdatedAt"" = now()
+                    WHERE ""Id"" = {id}
+                      AND ""Status"" NOT IN ({(int)ReturnStatus.Received}, {(int)ReturnStatus.Refunded}, {(int)ReturnStatus.Rejected})", ct);
+            if (claimed == 0)
             {
                 return BadRequest("Le retour a déjà été traité.");
             }
 
-            foreach (var item in returnOrder.Items)
+            // warehouse each product was sold from (fallback: warehouse 1, as before)
+            var soldFrom = await _context.OrderItems.AsNoTracking()
+                .Where(oi => oi.OrderId == returnOrder.OrderId)
+                .Select(oi => new { oi.ProductId, oi.WarehouseId })
+                .ToListAsync(ct);
+
+            foreach (var item in returnOrder.Items.Where(i => i.Condition == ReturnCondition.Good))
             {
-                // Si l'article est en bon état, on le remet en stock
-                if (item.Condition == ReturnCondition.Good)
-                {
-                    // Trouver le stock (Defaut Warehouse 1)
-                    int warehouseId = 1; 
-                    
-                    var stock = await _context.Stocks
-                        .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.WarehouseId == warehouseId);
+                var warehouseId = soldFrom.FirstOrDefault(x => x.ProductId == item.ProductId)?.WarehouseId ?? 1;
 
-                    if (stock == null)
-                    {
-                        stock = new Stock
-                        {
-                            ProductId = item.ProductId,
-                            WarehouseId = warehouseId,
-                            Quantity = 0,
-                            ReservedQuantity = 0,
-                            ReorderPoint = 0,
-                            LastUpdated = DateTime.UtcNow
-                        };
-                        _context.Stocks.Add(stock);
-                    }
+                var stockId = await _context.Stocks.AsNoTracking()
+                    .Where(s => s.ProductId == item.ProductId && s.WarehouseId == warehouseId)
+                    .OrderBy(s => s.Id)
+                    .Select(s => (int?)s.Id)
+                    .FirstOrDefaultAsync(ct)
+                    ?? await _ledger.GetOrCreateStockIdAsync(item.ProductId, warehouseId, null, 0, ct);
 
-                    stock.Quantity += item.Quantity;
-                    stock.LastUpdated = DateTime.UtcNow;
-
-                    // Mouvement de stock
-                    var movement = new StockMovement
-                    {
-                        StockId = stock.Id,
-                        Type = MovementType.Inbound, // Retour client considéré comme entrée
-                        Quantity = item.Quantity,
-                        UnitCost = stock.AverageCost, // On garde la valeur actuelle ou cout standard? Simplification: AverageCost
-                        Reference = returnOrder.ReturnNumber,
-                        Notes = "Retour Client (RMA)",
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    // Hack: Si StockId n'est pas encore généré (nouveau stock), EF Core le gère lors du SaveChanges si la relation est bien faite.
-                    // Mais ici on n'a pas mis movement dans stock.Movements.Add().
-                    // On l'ajoute au contexte.
-                    _context.StockMovements.Add(movement);
-                }
-                // Si endommagé, on ne remet pas en stock (ou stock "Défectueux" séparé, hors scope MVP)
+                // back into stock at the current average cost (the average does not move)
+                await _ledger.ReceiveAsync(stockId, item.Quantity, null, MovementType.Inbound,
+                    returnOrder.ReturnNumber, "Retour Client (RMA)", ct);
             }
+            // damaged items are not restocked (out of MVP scope)
 
-            returnOrder.Status = ReturnStatus.Received;
-            returnOrder.ReceivedDate = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
+            await transaction.CommitAsync(ct);
             return Ok(new { message = "Retour réceptionné avec succès." });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
             _logger.LogError(ex, "Erreur lors de la réception du retour.");
             return StatusCode(500, "Erreur interne.");
         }

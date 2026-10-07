@@ -2,40 +2,33 @@ import { memo, useMemo } from 'react';
 import { Box, Grid, Stat, StatLabel, StatNumber, StatHelpText, useColorModeValue } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { ordersApi, productsApi, stockApi } from '../services/api';
+import { analyticsApi, ordersApi } from '../services/api';
 
 const Dashboard = memo(() => {
   const { t } = useTranslation();
   const bgColor = useColorModeValue('white', 'gray.800');
 
-  const { data: orders } = useQuery({
-    queryKey: ['orders'],
-    queryFn: () => ordersApi.getAll().then(res => res.data),
+  // Server-side aggregates: the dashboard no longer downloads every row just to count it.
+  const { data: ordersTotal } = useQuery({
+    queryKey: ['orders', 'total'],
+    queryFn: () =>
+      ordersApi.getAll({ page: 1, pageSize: 1 }).then(res => Number(res.headers['x-total-count'] ?? 0)),
   });
 
-  const { data: products } = useQuery({
-    queryKey: ['products'],
-    queryFn: () => productsApi.getAll().then(res => res.data),
+  const { data: analytics } = useQuery({
+    queryKey: ['analytics', 'stats'],
+    queryFn: () => analyticsApi.getStats().then(res => res.data),
   });
 
-  const { data: stocks } = useQuery({
-    queryKey: ['stocks'],
-    queryFn: () => stockApi.getAll().then(res => res.data),
-  });
-
-  const stats = useMemo(() => {
-    const totalOrders = orders?.length || 0;
-    const totalProducts = products?.length || 0;
-    const totalStockValue = stocks?.reduce((sum, stock) => sum + (stock.quantity * stock.averageCost), 0) || 0;
-    const lowStockItems = stocks?.filter(stock => stock.quantity <= stock.reorderPoint).length || 0;
-
-    return {
-      totalOrders,
-      totalProducts,
-      totalStockValue: totalStockValue.toFixed(2),
-      lowStockItems,
-    };
-  }, [orders, products, stocks]);
+  const stats = useMemo(
+    () => ({
+      totalOrders: ordersTotal ?? 0,
+      totalProducts: analytics?.total_products ?? 0,
+      totalStockValue: (analytics?.total_stock_value ?? 0).toFixed(2),
+      lowStockItems: analytics?.low_stock_count ?? 0,
+    }),
+    [ordersTotal, analytics],
+  );
 
   return (
     <Box>

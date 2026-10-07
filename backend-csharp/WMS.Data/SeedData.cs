@@ -193,6 +193,7 @@ public static class SeedData
                 StockId = stock.Id,
                 Type = MovementType.Inbound,
                 Quantity = stock.Quantity,
+                Delta = stock.Quantity, // ledger must always equal the stock (see wms_stock_drift)
                 UnitCost = stock.AverageCost,
                 Reference = "INIT",
                 Notes = "Stock initial"

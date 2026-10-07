@@ -62,8 +62,24 @@ export const analyticsClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
-// Note: Analytics est en lecture seule et ne nécessite pas forcément d'office d'auth pour MVP, 
-// mais si on veut sécuriser aussi, on peut ajouter le même intercepteur.
+// The analytics service validates the same JWT as the C# API.
+analyticsClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+analyticsClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
 
 // API Functions - Products
 export const productsApi = {
@@ -133,7 +149,7 @@ export const purchaseOrdersApi = {
 };
 
 export const ordersApi = {
-  getAll: () => apiClient.get<Order[]>('/orders'),
+  getAll: (params?: { page?: number; pageSize?: number }) => apiClient.get<Order[]>('/orders', { params }),
   create: (data: any) => apiClient.post<Order>('/orders', data),
   ship: (id: number, data: { items: { orderItemId: number; locationId: number; quantity: number }[] }) => apiClient.post<Order>(`/orders/${id}/ship`, data),
   get: (id: number) => apiClient.get<Order>(`/orders/${id}`),

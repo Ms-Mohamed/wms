@@ -1,0 +1,19 @@
+# Development overrides: Vite dev server with hot reload instead of the built nginx image.
+services:
+  wms-api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      SeedDemoData: "true"
+  wms-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      VITE_API_TARGET: http://wms-api:8080
+      VITE_PYTHON_API_TARGET: http://wms-analytics:8000
+    mem_limit: 512m
+    cpus: 1.0

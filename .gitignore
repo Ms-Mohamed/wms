@@ -97,3 +97,16 @@ dist/
 build/
 out/
 
+
+# Secrets and local config
+.env
+appsettings.json
+appsettings.*.json
+!appsettings.json.example
+
+# Logs and scratch output (these were being committed)
+*.log
+api_logs.txt
+build_log*.txt
+startup_*.txt
+.pytest_cache/

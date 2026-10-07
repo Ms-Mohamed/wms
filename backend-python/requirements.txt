@@ -1,7 +1,6 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pandas==2.1.3
-scikit-learn==1.3.2
-psycopg2-binary==2.9.9
-python-dotenv==1.0.0
-pydantic==2.5.0
+# Deliberately tiny: no pandas / scikit-learn / numpy (the maths is a least-squares line and the EOQ formula).
+fastapi==0.142.3
+uvicorn==0.53.0
+psycopg2-binary==2.9.13
+PyJWT==2.14.0
+python-dotenv==1.2.3

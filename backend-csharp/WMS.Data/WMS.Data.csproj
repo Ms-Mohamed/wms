@@ -14,4 +14,9 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- single source of truth for the DB integrity layer; also run by tests/db -->
+    <EmbeddedResource Include="Sql\*.sql" LogicalName="WMS.Data.Sql.%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

@@ -1,406 +1,126 @@
-# 🏭 Warehouse Management System (WMS)
+# WMS — Warehouse Management System with a tested stock-integrity core
 
-Plateforme Web de Gestion de Stock d'entreprise avec architecture **Polyglot Microservices**.
+A stock-management platform whose one job is to **never lose or invent stock**, and to stay fast on weak hardware.
 
-[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python)](https://www.python.org/)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://reactjs.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-336791?logo=postgresql)](https://www.postgresql.org/)
+- **C# / ASP.NET Core 8 + PostgreSQL** — transactions: orders, shipments, receipts, returns, invoices.
+- **Python / FastAPI** — read-only analytics: demand forecast, reorder point, EOQ, dashboard aggregates.
+- **React + TypeScript** — UI (FR/EN).
 
-## 📋 Table des Matières
+## What is actually proven
 
-- [Vue d'Ensemble](#vue-densemble)
-- [Architecture](#architecture)
-- [Fonctionnalités](#fonctionnalités)
-- [Technologies](#technologies)
-- [Prérequis](#prérequis)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Démarrage](#démarrage)
-- [Documentation](#documentation)
-- [Structure du Projet](#structure-du-projet)
-- [API Endpoints](#api-endpoints)
-- [Contribution](#contribution)
-- [License](#license)
+Every claim below has a test or a measurement you can re-run. Nothing here is "trust me".
 
-## 🎯 Vue d'Ensemble
+| Claim | Proof | Status |
+|---|---|---|
+| Stock never oversells under concurrency | 100 parallel shippers on a 5-unit stock → **exactly 5 succeed**, 95 refused, stock = 0 (`tests/db`) | verified, 21 DB tests pass |
+| The test is meaningful | Control experiment: the **original** read-check-write logic lets **20 of 20** shipments through on that same 5-unit stock | verified |
+| Ledger always equals stock | `Stock.Quantity = SUM(StockMovements.Delta)`; random multi-threaded receive/issue/adjust/transfer, then the `wms_stock_drift` view must be empty | verified |
+| No negative stock, even from raw SQL | `CHECK` constraints on `Stocks` | verified |
+| No deadlock on opposite transfers | 8 threads × 100 transfers A↔B | verified |
+| No duplicate document numbers | Postgres sequences, 40 concurrent callers | verified |
+| Same order shipped twice → once | Conditional `UPDATE ... WHERE Status IN (...)` claim + 8 parallel callers | xUnit test written (see note) |
+| Retried POST creates one order | `Idempotency-Key` header | xUnit test written (see note) |
+| Analytics service is light | 63–66 MB RAM vs 193–257 MB for the pandas/scikit-learn original, 3.4× throughput | measured, see below |
+| Analytics service cannot write | read-only DB role + read-only sessions; test attempts an `UPDATE` | verified, 21 analytics tests pass |
 
-WMS est une plateforme complète de gestion de stock d'entreprise avec :
-- ✅ **Gestion transactionnelle** robuste (commandes, stock, factures)
-- ✅ **Analyses prédictives** avec Machine Learning
-- ✅ **Optimisation des achats** (Point de Commande, EOQ)
-- ✅ **Interface moderne** et multilingue (FR/EN)
-- ✅ **Architecture microservices** polyglotte
+> **Note on the C# tests.** The 9 xUnit tests in `backend-csharp/WMS.Tests` run the real EF migrations on a real PostgreSQL. They were written in an environment that could not download NuGet packages, so they were **type-checked but not executed there**. The database behaviour they rely on is executed by the Python tests above (same SQL file). CI (`.github/workflows/ci.yml`) runs them on every push — look at the badge/Actions tab for the real result.
 
-## 🏗️ Architecture
+## How the integrity works
 
-### Polyglot Microservices Architecture
+The rules live **in the database**, so no code path (C#, Python, `psql`, a future service) can break them. Single source of truth: [`backend-csharp/WMS.Data/Sql/stock_integrity.sql`](backend-csharp/WMS.Data/Sql/stock_integrity.sql), applied by an EF migration and executed directly by the tests.
+
+1. **Atomic stock decrement.** `wms_stock_issue()` is one `UPDATE ... WHERE Quantity - Reserved >= @q`. Under READ COMMITTED a concurrent caller waits for the row lock, then re-checks the condition on the fresh row — two callers can never take the last unit.
+2. **Signed ledger.** Every quantity change writes a `StockMovements` row with a signed `Delta` in the same transaction. `wms_stock_drift` must always be empty.
+3. **Constraints as the last line of defence.** `Quantity >= 0`, `0 <= Reserved <= Quantity`.
+4. **Claim-before-act on documents.** Shipping, receiving a purchase order and receiving a return first *claim* the document with a conditional `UPDATE` (status transition). Double-click, retry or two users can't process it twice.
+5. **Incremental weighted average cost (CUMP)** computed inside the same `UPDATE` (4-decimal precision; the old 2-decimal rounding drifted).
+6. **Sequences for document numbers**, a race-free `get_or_create` for stock rows (and a unique index that also covers `NULL` locations — the old one didn't, so duplicate rows were possible), lock ordering for transfers.
+7. A shipment is **all-or-nothing**: if line 2 lacks stock, line 1, the status claim and the invoice roll back.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Frontend React (TypeScript)               │
-│                    Port 3000                                 │
-└──────┬───────────────────────────────┬───────────────────────┘
-       │                               │
-       │ Requêtes API                  │ Requêtes API
-       │                               │
-┌──────▼──────────┐          ┌─────────▼─────────┐
-│  Backend C#     │          │  Backend Python  │
-│  ASP.NET Core   │          │  FastAPI         │
-│  Port 5000      │          │  Port 8000       │
-│                 │          │                   │
-│  • Orders       │          │  • Forecasting    │
-│  • Stock        │          │  • Optimization   │
-│  • Invoices     │          │  • Analytics      │
-└──────┬──────────┘          └─────────┬─────────┘
-       │                               │
-       └──────────────┬─────────────────┘
-                      │
-              ┌───────▼────────┐
-              │   PostgreSQL   │
-              │   Database      │
-              └────────────────┘
+React (nginx) ──/api──────────► C# API ──────► PostgreSQL ◄── read-only role ── Python analytics
+              └─/python-api──────────────────────────────────────────────────────►
+                 (JWT shared by both services)
 ```
 
-**Pourquoi Polyglot ?**
-- **C#** : Performance et robustesse pour les transactions
-- **Python** : Écosystème data science pour les analyses ML
-- **PostgreSQL** : Source de vérité unique partagée
+Why two languages? C# owns the transactional core. Python owns analytics. Today the analytics maths is a least-squares trend and the EOQ formula, so it uses **no pandas/scikit-learn** (that's why it is small); the Python service is the place where heavier models would go if the data justified them.
 
-📖 [Documentation Architecture Complète](./ARCHITECTURE.md)
+## Performance (measured)
 
-## ✨ Fonctionnalités
+Dataset: 100,000 products, 1,000,000 orders, 2,000,000 order lines (343 MB). 16 concurrent clients, 25 s, mix of `/predict` and `/optimize`. **Server, PostgreSQL and the load generator shared the same 2-vCPU / 8 GB cloud sandbox**, so absolute numbers are conservative; compare the two rows to each other, not to your hardware. Reproduce with `performance/bench_analytics.py`.
 
-### Core Transactionnel (C#)
-- ✅ Gestion des commandes clients avec transactions atomiques
-- ✅ Décrément automatique du stock
-- ✅ Génération automatique de factures
-- ✅ Gestion des produits (CRUD complet)
-- ✅ Gestion multi-entrepôts et emplacements
-- ✅ Traçabilité (Lots/Numéros de série)
-- ✅ Valorisation CUMP (Coût Unitaire Moyen Pondéré)
+| | Original (pandas + scikit-learn) | Now |
+|---|---|---|
+| Throughput | 50 req/s | **173 req/s** |
+| p50 / p95 latency | 317 ms / 361 ms | **85 ms / 164 ms** |
+| RAM (RSS) | 192–197 MB | **63–66 MB** |
+| Python dependencies | pandas, scikit-learn, numpy… | FastAPI, psycopg2, PyJWT |
 
-### Service Analytique (Python)
-- ✅ **Prévision de demande** : ML pour prédire les ventes (3 mois)
-- ✅ **Optimisation des achats** : Calcul du Point de Commande et EOQ
-- ✅ **Alertes de stock** : Notifications automatiques
-- ✅ Mode lecture seule (ne modifie jamais la DB)
+Equivalence check on 60 products against the original: reorder point / EOQ / demand identical (±0.01); 3-month forecasts within 1.7 % (the original spaced months by 30.44 days, the new one by calendar month and treats months without sales as zero).
 
-### Frontend React
-- ✅ Dashboard interactif avec statistiques en temps réel
-- ✅ Gestion des commandes avec interface moderne
-- ✅ Visualisation du stock par entrepôt
-- ✅ Graphiques analytiques (Recharts)
-- ✅ Page de facturation professionnelle et imprimable
-- ✅ Internationalisation (Français/Anglais)
-- ✅ Optimisations de performance (memoization, code splitting)
+Honest limits of that benchmark:
+- Dashboard aggregates over 1 M orders take ~0.3–0.45 s of database CPU each. They are served from a 10-second cache; **uncached, the same mix dropped to 17 req/s** on this machine. If you need real-time totals at this size, add a summary table.
+- This is the analytics service only. The C# API under load was **not** benchmarked here (no .NET packages available) — `performance/k6-load.js` is there for that, but its "monolith" mode is not a like-for-like comparison and should not be quoted.
+- "Low-end PC" is shown by memory footprint and CPU cgroup limits in `docker-compose.yml` (db 384 MB / 1 CPU, API 384 MB / 1 CPU, analytics 128 MB / 0.5 CPU, frontend 64 MB). It has **not** been run on a physical low-end machine.
 
-## 🛠️ Technologies
+## Bugs found and fixed while hardening
 
-### Backend C#
-- **Framework** : ASP.NET Core 8.0
-- **ORM** : Entity Framework Core avec Npgsql
-- **Architecture** : Clean Architecture (Data, Business, API)
-- **Base de données** : PostgreSQL
+- **Overselling** on concurrent shipments (read-check-write).
+- **Duplicate stock rows** possible when location is `NULL` (unique index ignores NULLs).
+- **Shipping twice**: two requests could both pass the "already shipped" check.
+- **Purchase-order receipt hard-coded warehouse 1** and could be applied twice.
+- **Duplicate order/invoice numbers** (`last + 1`), and PO/RMA numbers from 4 random hex characters.
+- **`/predict` returned HTTP 500** when the 12-month window crossed a Morocco clock change (mixed UTC offsets → pandas error).
+- **Analytics proxy in the dev stack pointed at `/api/analytics/...`**, a path the service never served.
+- **Anyone could self-register** and get full API access; JWT signing key fell back to a known string; admin seeded with `password123`; database password committed in an example file and docs (these remain in git history — **rotate any password that was ever real**).
+- Analytics endpoints were `async def` doing blocking DB calls (blocked the event loop) and opened a new connection per request.
+- List endpoints returned entire tables; the dashboard downloaded every row to count them.
 
-### Backend Python
-- **Framework** : FastAPI
-- **Data Science** : Pandas, NumPy, Scikit-learn
-- **Database** : Psycopg2-binary
-- **Server** : Uvicorn
-
-### Frontend
-- **Framework** : React 18 avec TypeScript
-- **Styling** : Tailwind CSS + Chakra UI
-- **State Management** : React Query
-- **Charts** : Recharts
-- **i18n** : react-i18next
-- **Build Tool** : Vite
-
-### Base de Données
-- **SGBD** : PostgreSQL 14+
-- **ORM C#** : Entity Framework Core
-- **ORM Python** : Psycopg2 (raw SQL)
-
-## 📦 Prérequis
-
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download)
-- [Python 3.10+](https://www.python.org/downloads/)
-- [PostgreSQL 14+](https://www.postgresql.org/download/)
-- [Node.js 18+](https://nodejs.org/)
-- [Git](https://git-scm.com/)
-
-## 🚀 Installation
-
-### 1. Cloner le Repository
+## Run it
 
 ```bash
-git clone https://github.com/votre-username/wms.git
-cd wms
+cp .env.example .env        # set the passwords and a >= 32 char JWT_SECRET
+docker compose up -d --build
+# UI: http://localhost   (user: admin / the WMS_ADMIN_PASSWORD you set)
 ```
 
-### 2. Configuration de la Base de Données
+Development with hot reload: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`.
 
-#### Créer la Base de Données PostgreSQL
-
-```sql
-CREATE DATABASE wms_db;
-CREATE USER postgres WITH PASSWORD 'votre_mot_de_passe';
-GRANT ALL PRIVILEGES ON DATABASE wms_db TO postgres;
-```
-
-Ou utilisez le script fourni :
+### Tests
 
 ```bash
-cd backend-csharp/scripts
-psql -U postgres -f create-database.sql
+# database integrity (real PostgreSQL; set WMS_TEST_DSN, default uses a local socket)
+pip install "psycopg[binary]" pytest && pytest tests/db -v
+
+# analytics service
+pip install -r backend-python/requirements-dev.txt && pytest backend-python/tests -v
+
+# C# (needs .NET 8 SDK and a PostgreSQL; creates and drops throw-away databases)
+export WMS_TEST_CONNECTION="Host=localhost;Port=5432;Username=postgres;Password=postgres;Database=postgres"
+dotnet test backend-csharp/WMS.sln
 ```
 
-### 3. Configuration des Backends
-
-#### Backend C#
-
-1. Copier le fichier de configuration exemple :
-```bash
-cd backend-csharp/WMS.API
-cp appsettings.json.example appsettings.json
-```
-
-2. Modifier `appsettings.json` avec vos credentials PostgreSQL :
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=wms_db;Username=postgres;Password=votre_mot_de_passe"
-  }
-}
-```
-
-3. Appliquer les migrations :
-```bash
-cd backend-csharp/WMS.API
-dotnet ef database update
-```
-
-#### Backend Python
-
-1. Créer le fichier `.env` :
-```bash
-cd backend-python
-cp .env.example .env
-```
-
-2. Modifier `.env` avec vos credentials :
-```env
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=wms_db
-DB_USER=postgres
-DB_PASSWORD=votre_mot_de_passe
-```
-
-3. Installer les dépendances :
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Configuration du Frontend
+### Benchmark
 
 ```bash
-cd frontend
-npm install
+psql -f backend-python/tests/schema_analytics.sql wms_bench
+psql -v products=100000 -v orders=1000000 -f performance/seed_analytics_bench.sql wms_bench
+PGTZ=UTC DB_NAME=wms_bench python performance/bench_analytics.py equivalence
+PGTZ=UTC DB_NAME=wms_bench python performance/bench_analytics.py bench --version v2 --mix product
 ```
 
-## ⚙️ Configuration
+## API (C#, `/api`, JWT required except login)
 
-### Variables d'Environnement
+`POST auth/login` · `POST auth/register` (Admin only) · `GET products|stocks|orders` (paged: `?page=&pageSize=`, max 500, total in `X-Total-Count`) · `POST orders` (`Idempotency-Key` header supported) · `POST orders/{id}/ship` · `POST purchaseorders/{id}/receive` · `POST returns/{id}/receive` · `POST inventory/adjust` · `POST inventory/transfer` · `GET /health`.
 
-#### Backend C#
-- `appsettings.json` : Configuration principale
-- `appsettings.Development.json` : Configuration développement
+Analytics (`/python-api` via nginx, same JWT): `GET stats` · `sales-history` · `low-stock?limit=` · `predict/{productId}` · `optimize/{productId}` · `health`.
 
-#### Backend Python
-- `.env` : Variables d'environnement (ne pas commiter !)
+## Known limitations (not hidden)
 
-#### Frontend
-- Les URLs des APIs sont configurées dans `vite.config.ts`
-
-## 🏃 Démarrage
-
-### Option 1 : Scripts PowerShell (Recommandé)
-
-```powershell
-# Démarrer tous les services
-.\start-all-services.ps1
-
-# Ou démarrer individuellement
-.\start-backend-csharp.ps1
-.\start-backend-python.ps1
-.\start-frontend.ps1
-```
-
-### Option 2 : Démarrage Manuel
-
-#### Backend C# (Terminal 1)
-```bash
-cd backend-csharp/WMS.API
-dotnet run
-```
-→ Service disponible sur `http://localhost:5000`
-→ Swagger UI : `http://localhost:5000/swagger`
-
-#### Backend Python (Terminal 2)
-```bash
-cd backend-python
-python -m uvicorn main:app --reload --port 8000
-```
-→ Service disponible sur `http://localhost:8000`
-→ Documentation : `http://localhost:8000/docs`
-
-#### Frontend (Terminal 3)
-```bash
-cd frontend
-npm run dev
-```
-→ Application disponible sur `http://localhost:3000`
-
-### Accès à l'Application
-
-- **Frontend** : http://localhost:3000
-- **API C# Swagger** : http://localhost:5000/swagger
-- **API Python Docs** : http://localhost:8000/docs
-
-## 📚 Documentation
-
-### Documentation Principale
-
-- [Architecture](./ARCHITECTURE.md) - Architecture polyglotte détaillée
-- [Comment ça fonctionne](./HOW_IT_WORKS.md) - Flux de données et scénarios
-- [Lien C# et Python](./C_SHARP_PYTHON_CONNECTION.md) - Communication entre services
-- [Production Ready](./PRODUCTION_READINESS.md) - Checklist pour la production
-- [Quick Wins](./QUICK_WINS_PRODUCTION.md) - Améliorations rapides
-
-### Documentation par Service
-
-- [Backend C#](./backend-csharp/README.md)
-- [Backend Python](./backend-python/README.md)
-- [Frontend](./frontend/README.md)
-
-## 📁 Structure du Projet
-
-```
-wms/
-├── backend-csharp/              # Service transactionnel (C#)
-│   ├── WMS.API/                # Couche API (Controllers, Program.cs)
-│   ├── WMS.Business/           # Logique métier (Services, DTOs)
-│   ├── WMS.Data/               # Accès aux données (Entities, DbContext)
-│   └── scripts/                # Scripts SQL
-│
-├── backend-python/              # Service analytique (Python)
-│   ├── main.py                 # Application FastAPI
-│   ├── requirements.txt        # Dépendances Python
-│   └── .env                    # Variables d'environnement (non commité)
-│
-├── frontend/                    # Application React
-│   ├── src/
-│   │   ├── components/         # Composants React
-│   │   ├── pages/              # Pages de l'application
-│   │   ├── services/           # Services API
-│   │   └── types/              # Types TypeScript
-│   └── package.json
-│
-└── Documentation/
-    ├── ARCHITECTURE.md
-    ├── HOW_IT_WORKS.md
-    └── ...
-```
-
-## 🔌 API Endpoints
-
-### Backend C# (Port 5000)
-
-#### Commandes
-- `POST /api/orders` - Créer une commande (avec transaction)
-- `GET /api/orders` - Lister les commandes
-- `GET /api/orders/{id}` - Détails d'une commande
-
-#### Factures
-- `GET /api/invoices/{orderId}` - Obtenir une facture
-
-#### Produits
-- `GET /api/products` - Lister les produits
-- `POST /api/products` - Créer un produit
-- `PUT /api/products/{id}` - Modifier un produit
-- `DELETE /api/products/{id}` - Supprimer un produit
-
-#### Stock
-- `GET /api/stocks` - Voir les stocks
-
-### Backend Python (Port 8000)
-
-#### Analytics
-- `GET /api/analytics/predict/{productId}` - Prévision de demande (3 mois)
-- `GET /api/analytics/optimize/{productId}` - Optimisation (Point de Commande, EOQ)
-- `GET /api/analytics/alerts` - Alertes de stock
-
-📖 Documentation complète : http://localhost:5000/swagger et http://localhost:8000/docs
-
-## 🧪 Tests
-
-### Tests d'Intégrité
-```bash
-# Voir VALIDATION_TEST.md pour les tests complets
-```
-
-### Tests Manuels
-1. Créer une commande avec stock insuffisant → Doit échouer
-2. Créer une commande valide → Stock décrémenté
-3. Consulter les analytics → Prédictions affichées
-4. Voir une facture → Format professionnel
-
-## 🚀 Déploiement
-
-Voir [PRODUCTION_READINESS.md](./PRODUCTION_READINESS.md) pour la checklist complète.
-
-### Points Critiques
-- ✅ Authentification et autorisation
-- ✅ Gestion des secrets (Azure Key Vault, etc.)
-- ✅ Backups automatiques PostgreSQL
-- ✅ Health checks
-- ✅ Logging structuré
-- ✅ HTTPS/SSL
-- ✅ Rate limiting
-
-## 🤝 Contribution
-
-Les contributions sont les bienvenues ! Pour contribuer :
-
-1. Fork le projet
-2. Créez une branche (`git checkout -b feature/AmazingFeature`)
-3. Committez vos changements (`git commit -m 'Add some AmazingFeature'`)
-4. Push vers la branche (`git push origin feature/AmazingFeature`)
-5. Ouvrez une Pull Request
-
-## 📝 License
-
-Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
-
-## 👥 Auteurs
-
-- **Votre Nom** - *Développement initial*
-
-## 🙏 Remerciements
-
-- Entity Framework Core
-- FastAPI
-- React Community
-- PostgreSQL
-
-## 📞 Support
-
-Pour toute question ou problème :
-- Ouvrir une [Issue](https://github.com/votre-username/wms/issues)
-- Consulter la [Documentation](./ARCHITECTURE.md)
-
----
-
-⭐ Si ce projet vous a aidé, n'hésitez pas à lui donner une étoile !
+- **Reservations are not implemented.** `ReservedQuantity` is enforced by the guards, but nothing reserves stock when an order is created; stock is checked and removed at shipment.
+- **No partial shipments**: every order line must ship in full (the old code allowed it but invoiced the full amount).
+- **The React tables have no pagination UI yet.** The API caps at 500 rows per request, so screens beyond 500 rows need pagination added in the UI. The dashboard no longer depends on it.
+- Roles: only account creation is Admin-restricted; other endpoints are open to any authenticated user.
+- Lots / serial numbers exist in the schema but are not wired into the ledger.
+- Tested on PostgreSQL 16; the SQL uses nothing newer than 14, but 14/15 were not run.
+- Older design notes in `ARCHITECTURE.md`, `HOW_IT_WORKS.md` and friends predate this hardening and may disagree with this README — this file is the reference.

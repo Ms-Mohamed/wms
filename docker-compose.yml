@@ -1,74 +1,98 @@
+# Production-like stack with hard resource limits (the point of this project: it must run on a weak machine).
+#   cp .env.example .env   # then edit it
+#   docker compose up -d --build
+# Development with hot reload:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+name: wms
+
 services:
-  # 1. Database Service (PostgreSQL)
   db:
-    image: postgres:14-alpine
-    container_name: wms-db
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: wms_db
+      WMS_RO_PASSWORD: ${WMS_RO_PASSWORD:?Set WMS_RO_PASSWORD in .env}
+    # small-machine tuning: few connections, modest buffers
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=60
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5432:5432"
-    networks:
-      - wms-network
+      - "127.0.0.1:5432:5432"        # localhost only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wms_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 384m
+    cpus: 1.0
+    networks: [wms-network]
 
-  # 2. Backend C# Service
   wms-api:
     build:
       context: ./backend-csharp
-      dockerfile: Dockerfile
-    container_name: wms-api
+    restart: unless-stopped
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
-      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=wms_db;Username=postgres;Password=password123
-      - ASPNETCORE_URLS=http://+:8080
-    ports:
-      - "8080:8080"
-    networks:
-      - wms-network
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=wms_db;Username=postgres;Password=${POSTGRES_PASSWORD};Maximum Pool Size=20;Minimum Pool Size=1
+      JwtSettings__SecretKey: ${JWT_SECRET:?Set JWT_SECRET (>= 32 chars) in .env}
+      WMS_ADMIN_PASSWORD: ${WMS_ADMIN_PASSWORD:-}
+      SeedDemoData: ${SEED_DEMO_DATA:-false}
+      Cors__Origins__0: http://localhost
+      # workstation GC + no tiered PGO: smaller footprint
+      DOTNET_gcServer: "0"
+      DOTNET_TieredPGO: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /health HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q 200 <&3'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 384m
+    cpus: 1.0
+    networks: [wms-network]
 
-  # 3. Backend Python Service
   wms-analytics:
     build:
       context: ./backend-python
-      dockerfile: Dockerfile
-    container_name: wms-analytics
+    restart: unless-stopped
     depends_on:
-      - db
+      wms-api:
+        condition: service_started      # the API applies the migrations that create the tables
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_NAME=wms_db
-      - DB_USER=postgres
-      - DB_PASSWORD=password123
-    ports:
-      - "8000:8000"
-    networks:
-      - wms-network
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: wms_db
+      DB_USER: wms_ro                   # read-only role, created by db/init
+      DB_PASSWORD: ${WMS_RO_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      DB_POOL_MAX: "6"
+      CORS_ORIGINS: http://localhost
+    mem_limit: 128m
+    cpus: 0.5
+    networks: [wms-network]
 
-  # 4. Frontend Service
   wms-frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
-    container_name: wms-frontend
+    restart: unless-stopped
+    depends_on: [wms-api, wms-analytics]
     ports:
       - "80:80"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - CHOKIDAR_USEPOLLING=true
-      - VITE_API_TARGET=http://wms-api:8080
-      - VITE_PYTHON_API_TARGET=http://wms-analytics:8000
-    depends_on:
-      - wms-api
-      - wms-analytics
-    networks:
-      - wms-network
+    mem_limit: 64m
+    cpus: 0.25
+    networks: [wms-network]
 
 networks:
   wms-network:

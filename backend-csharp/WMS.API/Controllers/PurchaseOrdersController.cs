@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using WMS.Business.Exceptions;
+using WMS.Business.Services;
 using WMS.Data;
 using WMS.Data.Entities;
 
@@ -12,11 +14,13 @@ namespace WMS.API.Controllers;
 public class PurchaseOrdersController : ControllerBase
 {
     private readonly WmsDbContext _context;
+    private readonly IStockLedger _ledger;
     private readonly ILogger<PurchaseOrdersController> _logger;
 
-    public PurchaseOrdersController(WmsDbContext context, ILogger<PurchaseOrdersController> logger)
+    public PurchaseOrdersController(WmsDbContext context, IStockLedger ledger, ILogger<PurchaseOrdersController> logger)
     {
         _context = context;
+        _ledger = ledger;
         _logger = logger;
     }
 
@@ -65,7 +69,7 @@ public class PurchaseOrdersController : ControllerBase
         {
             var purchaseOrder = new PurchaseOrder
             {
-                OrderNumber = $"PO-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString().Substring(0, 4).ToUpper()}",
+                OrderNumber = await _ledger.NextNumberAsync("po"),
                 SupplierId = dto.SupplierId,
                 ExpectedDate = dto.ExpectedDate.HasValue ? DateTime.SpecifyKind(dto.ExpectedDate.Value, DateTimeKind.Utc) : null,
                 Notes = dto.Notes,
@@ -94,80 +98,56 @@ public class PurchaseOrdersController : ControllerBase
     }
 
     // POST: api/PurchaseOrders/5/receive
+    /// <summary>
+    /// Receives a purchase order into a location. The order is claimed with one conditional UPDATE, so a
+    /// double click / retry / two users can never receive (and count) the same goods twice. Each line goes
+    /// through the stock ledger (incremental CUMP + ledger row). All-or-nothing.
+    /// </summary>
     [HttpPost("{id}/receive")]
-    public async Task<IActionResult> ReceiveOrder(int id, [FromQuery] int? locationId)
+    public async Task<IActionResult> ReceiveOrder(int id, [FromQuery] int? locationId, CancellationToken ct)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
+        await using var transaction = await _context.Database.BeginTransactionAsync(ct);
         try
         {
-            var order = await _context.PurchaseOrders
+            var order = await _context.PurchaseOrders.AsNoTracking()
                 .Include(p => p.Items)
-                .FirstOrDefaultAsync(p => p.Id == id);
-
+                .FirstOrDefaultAsync(p => p.Id == id, ct);
             if (order == null) return NotFound();
 
-            if (order.Status == PurchaseOrderStatus.Received)
+            var targetLocationId = locationId ?? 1; // legacy default kept for the existing UI
+            var location = await _context.Locations.AsNoTracking().FirstOrDefaultAsync(l => l.Id == targetLocationId, ct);
+            if (location == null)
             {
-                return BadRequest("La commande a déjà été réceptionnée.");
+                return BadRequest($"L'emplacement ID {targetLocationId} n'existe pas.");
             }
 
-            // Default location logic
-            int targetWarehouseId = 1;
-            int targetLocationId = locationId ?? 1; // Default to 1 if not provided
-
-            // Check if target location exists
-            var locationExists = await _context.Locations.AnyAsync(l => l.Id == targetLocationId);
-            if (!locationExists)
+            var claimed = await _context.Database.ExecuteSqlInterpolatedAsync(
+                $@"UPDATE ""PurchaseOrders""
+                      SET ""Status"" = {(int)PurchaseOrderStatus.Received}, ""ReceivedDate"" = now(), ""UpdatedAt"" = now()
+                    WHERE ""Id"" = {id}
+                      AND ""Status"" NOT IN ({(int)PurchaseOrderStatus.Received}, {(int)PurchaseOrderStatus.Cancelled})", ct);
+            if (claimed == 0)
             {
-                 return BadRequest($"L'emplacement ID {targetLocationId} n'existe pas.");
+                return BadRequest("La commande a déjà été réceptionnée (ou annulée).");
             }
 
-            // Réceptionner chaque article
             foreach (var item in order.Items)
             {
-                var stock = await _context.Stocks
-                    .FirstOrDefaultAsync(s => s.ProductId == item.ProductId && s.LocationId == targetLocationId);
-
-                if (stock == null)
-                {
-                    stock = new Stock
-                    {
-                        ProductId = item.ProductId,
-                        WarehouseId = targetWarehouseId,
-                        LocationId = targetLocationId,
-                        Quantity = 0,
-                        ReservedQuantity = 0,
-                        ReorderPoint = 10, // Valeur par défaut
-                        LastUpdated = DateTime.UtcNow
-                    };
-                    _context.Stocks.Add(stock);
-                }
-
-                // Mettre à jour le coût moyen (Weighted Average Cost)
-                decimal totalValue = (stock.Quantity * stock.AverageCost) + (item.Quantity * item.UnitCost);
-                decimal totalQuantity = stock.Quantity + item.Quantity;
-                
-                if (totalQuantity > 0)
-                {
-                    stock.AverageCost = totalValue / totalQuantity;
-                }
-
-                // Augmenter la quantité
-                stock.Quantity += item.Quantity;
-                stock.LastUpdated = DateTime.UtcNow;
+                // the stock row lives in the location's own warehouse (was hard-coded to warehouse 1)
+                var stockId = await _ledger.GetOrCreateStockIdAsync(item.ProductId, location.WarehouseId, location.Id, 10, ct);
+                await _ledger.ReceiveAsync(stockId, item.Quantity, item.UnitCost, MovementType.Inbound,
+                    order.OrderNumber, $"Réception {order.OrderNumber}", ct);
             }
 
-            order.Status = PurchaseOrderStatus.Received;
-            order.ReceivedDate = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
+            await transaction.CommitAsync(ct);
             return Ok(new { message = "Commande réceptionnée avec succès", orderId = id, locationId = targetLocationId });
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or InsufficientStockException)
+        {
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
             _logger.LogError(ex, "Erreur lors de la réception de la commande {OrderId}", id);
             return StatusCode(500, "Une erreur s'est produite lors de la réception.");
         }

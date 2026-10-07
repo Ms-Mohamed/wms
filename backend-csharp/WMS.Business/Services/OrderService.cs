@@ -9,266 +9,219 @@ namespace WMS.Business.Services;
 public class OrderService : IOrderService
 {
     private readonly WmsDbContext _context;
+    private readonly IStockLedger _ledger;
 
-    public OrderService(WmsDbContext context)
+    public OrderService(WmsDbContext context, IStockLedger ledger)
     {
         _context = context;
+        _ledger = ledger;
     }
 
-    public async Task<OrderDto> CreateOrderAsync(CreateOrderDto createOrderDto)
+    public async Task<OrderDto> CreateOrderAsync(CreateOrderDto dto, string? idempotencyKey = null, CancellationToken ct = default)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
+        if (dto.Items == null || dto.Items.Count == 0)
+            throw new ArgumentException("Une commande doit contenir au moins un article");
+        if (dto.Items.Any(i => i.Quantity <= 0))
+            throw new ArgumentException("Les quantités doivent être supérieures à 0");
 
-        try
+        await using var transaction = await _context.Database.BeginTransactionAsync(ct);
+
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            var orderNumber = await GenerateOrderNumberAsync();
-
-            var order = new Order
+            // If a concurrent request with the same key is still running, this INSERT waits for it to
+            // commit and then inserts nothing: we return the order it created.
+            var inserted = await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"CreatedAt\") VALUES ({idempotencyKey}, 'order.create', now()) ON CONFLICT (\"Key\") DO NOTHING", ct);
+            if (inserted == 0)
             {
-                OrderNumber = orderNumber,
-                CustomerName = createOrderDto.CustomerName,
-                CustomerEmail = createOrderDto.CustomerEmail,
-                CustomerAddress = createOrderDto.CustomerAddress,
-                TaxRate = createOrderDto.TaxRate,
-                Notes = createOrderDto.Notes,
-                Status = OrderStatus.Pending, // Changed to Pending
-                OrderDate = DateTime.UtcNow
-            };
-
-            decimal subTotal = 0;
-
-            foreach (var itemDto in createOrderDto.Items)
-            {
-                var product = await _context.Products
-                    .FirstOrDefaultAsync(p => p.Id == itemDto.ProductId);
-
-                if (product == null)
-                {
-                    throw new ArgumentException($"Produit avec ID {itemDto.ProductId} introuvable");
-                }
-
-                // Removed strict stock validation here since we will validate at shipment
-                // Removed stock deduction logic
-                // Removed StockMovement creation
-
-                var unitPrice = itemDto.UnitPrice ?? product.UnitPrice;
-                var lineTotal = (itemDto.Quantity * unitPrice) - itemDto.Discount;
-
-                var orderItem = new OrderItem
-                {
-                    Order = order,
-                    ProductId = itemDto.ProductId,
-                    WarehouseId = itemDto.WarehouseId,
-                    Quantity = itemDto.Quantity,
-                    UnitPrice = unitPrice,
-                    UnitPriceAtSale = unitPrice,
-                    Discount = itemDto.Discount,
-                    LineTotal = lineTotal
-                };
-
-                order.Items.Add(orderItem);
-                subTotal += lineTotal;
+                var existing = (await _context.Database.SqlQuery<int>(
+                    $"SELECT COALESCE(\"ResourceId\", 0) AS \"Value\" FROM \"IdempotencyKeys\" WHERE \"Key\" = {idempotencyKey}")
+                    .ToListAsync(ct)).FirstOrDefault();
+                if (existing > 0)
+                    return await GetOrderByIdAsync(existing, ct) ?? throw new InvalidOperationException("Commande introuvable");
+                throw new InvalidOperationException("Une requête avec cette clé d'idempotence est déjà en cours");
             }
-
-            order.SubTotal = subTotal;
-            order.TaxAmount = subTotal * order.TaxRate;
-            order.TotalAmount = order.SubTotal + order.TaxAmount;
-
-            _context.Orders.Add(order);
-            await _context.SaveChangesAsync();
-
-            // Invoice creation removed from here (moved to shipment)
-
-            await transaction.CommitAsync();
-
-            return await GetOrderByIdAsync(order.Id) ?? throw new Exception("Erreur lors de la récupération de la commande créée");
         }
-        catch
+
+        var productIds = dto.Items.Select(i => i.ProductId).Distinct().ToList();
+        var products = await _context.Products
+            .Where(p => productIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id, ct);
+
+        var order = new Order
         {
-            await transaction.RollbackAsync();
-            throw;
+            OrderNumber = await _ledger.NextNumberAsync("order", ct),
+            CustomerName = dto.CustomerName,
+            CustomerEmail = dto.CustomerEmail,
+            CustomerAddress = dto.CustomerAddress,
+            TaxRate = dto.TaxRate,
+            Notes = dto.Notes,
+            Status = OrderStatus.Pending,
+            OrderDate = DateTime.UtcNow
+        };
+
+        decimal subTotal = 0;
+        foreach (var itemDto in dto.Items)
+        {
+            if (!products.TryGetValue(itemDto.ProductId, out var product))
+                throw new ArgumentException($"Produit avec ID {itemDto.ProductId} introuvable");
+
+            // Stock is checked and deducted atomically at shipment, not here.
+            var unitPrice = itemDto.UnitPrice ?? product.UnitPrice;
+            var lineTotal = (itemDto.Quantity * unitPrice) - itemDto.Discount;
+
+            order.Items.Add(new OrderItem
+            {
+                Order = order,
+                ProductId = itemDto.ProductId,
+                WarehouseId = itemDto.WarehouseId,
+                Quantity = itemDto.Quantity,
+                UnitPrice = unitPrice,
+                UnitPriceAtSale = unitPrice,
+                Discount = itemDto.Discount,
+                LineTotal = lineTotal
+            });
+            subTotal += lineTotal;
         }
+
+        order.SubTotal = subTotal;
+        order.TaxAmount = subTotal * order.TaxRate;
+        order.TotalAmount = order.SubTotal + order.TaxAmount;
+
+        _context.Orders.Add(order);
+        await _context.SaveChangesAsync(ct);
+
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"IdempotencyKeys\" SET \"ResourceId\" = {order.Id} WHERE \"Key\" = {idempotencyKey}", ct);
+        }
+
+        await transaction.CommitAsync(ct);
+
+        return await GetOrderByIdAsync(order.Id, ct) ?? throw new InvalidOperationException("Erreur lors de la récupération de la commande créée");
     }
 
-    public async Task<OrderDto> ShipOrderAsync(int orderId, ShipOrderDto shipOrderDto)
+    /// <summary>
+    /// Concurrency model:
+    ///  1. The order is claimed with one conditional UPDATE (Pending/Confirmed/Processing -> Shipped).
+    ///     Two simultaneous ship requests: one gets 1 row, the other 0 and is refused. No double shipment.
+    ///  2. Each line is removed from stock by an atomic statement (IStockLedger.IssueAsync). Two orders
+    ///     competing for the last units: exactly one wins, the other gets InsufficientStockException.
+    ///  3. Everything is one transaction: any failure rolls back the claim, all issued lines, and the invoice.
+    /// Partial shipments are not supported: every order line must be shipped in full.
+    /// </summary>
+    public async Task<OrderDto> ShipOrderAsync(int orderId, ShipOrderDto dto, CancellationToken ct = default)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
+        if (dto.Items == null || dto.Items.Count == 0)
+            throw new InvalidOperationException("Aucun article à expédier");
 
-        try
+        var order = await _context.Orders.AsNoTracking()
+            .Include(o => o.Items).ThenInclude(i => i.Product)
+            .FirstOrDefaultAsync(o => o.Id == orderId, ct);
+        if (order == null) throw new ArgumentException("Order not found");
+
+        // Validate the request against the order before touching anything.
+        var shippedPerItem = new Dictionary<int, decimal>();
+        foreach (var line in dto.Items)
         {
-            var order = await _context.Orders
-                .Include(o => o.Items)
-                .FirstOrDefaultAsync(o => o.Id == orderId);
+            var orderItem = order.Items.FirstOrDefault(i => i.Id == line.OrderItemId)
+                ?? throw new InvalidOperationException($"La ligne {line.OrderItemId} n'appartient pas à cette commande");
+            if (line.Quantity <= 0)
+                throw new InvalidOperationException("Les quantités expédiées doivent être supérieures à 0");
+            shippedPerItem[orderItem.Id] = shippedPerItem.GetValueOrDefault(orderItem.Id) + line.Quantity;
+        }
+        foreach (var orderItem in order.Items)
+        {
+            if (shippedPerItem.GetValueOrDefault(orderItem.Id) != orderItem.Quantity)
+                throw new InvalidOperationException(
+                    $"Expédition partielle non supportée: la ligne {orderItem.Id} doit être expédiée en totalité ({orderItem.Quantity})");
+        }
 
-            if (order == null) throw new ArgumentException("Order not found");
-            if (order.Status == OrderStatus.Shipped || order.Status == OrderStatus.Delivered)
-                throw new InvalidOperationException("Order is already shipped");
+        await using var transaction = await _context.Database.BeginTransactionAsync(ct);
 
-            foreach (var shipItem in shipOrderDto.Items)
+        var claimed = await _context.Database.ExecuteSqlInterpolatedAsync(
+            $@"UPDATE ""Orders""
+                  SET ""Status"" = {(int)OrderStatus.Shipped}, ""ShippedDate"" = now(), ""UpdatedAt"" = now()
+                WHERE ""Id"" = {orderId}
+                  AND ""Status"" IN ({(int)OrderStatus.Pending}, {(int)OrderStatus.Confirmed}, {(int)OrderStatus.Processing})", ct);
+        if (claimed == 0)
+            throw new InvalidOperationException("Order is already shipped or cancelled");
+
+        foreach (var line in dto.Items)
+        {
+            var orderItem = order.Items.First(i => i.Id == line.OrderItemId);
+
+            var stockId = await _context.Stocks.AsNoTracking()
+                .Where(s => s.ProductId == orderItem.ProductId && s.LocationId == line.LocationId)
+                .Select(s => (int?)s.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (stockId == null)
+                throw new InsufficientStockException(orderItem.ProductId, orderItem.Product.Code, line.Quantity, 0);
+
+            try
             {
-                var orderItem = order.Items.FirstOrDefault(i => i.Id == shipItem.OrderItemId);
-                if (orderItem == null) continue;
-
-                // Find stock in the specified location
-                var stock = await _context.Stocks
-                    .FirstOrDefaultAsync(s => s.ProductId == orderItem.ProductId && s.LocationId == shipItem.LocationId);
-
-                if (stock == null || stock.AvailableQuantity < shipItem.Quantity)
-                {
-                    throw new InsufficientStockException(orderItem.ProductId, "Unknown", shipItem.Quantity, stock?.AvailableQuantity ?? 0);
-                }
-
-                // Deduct Stock
-                stock.Quantity -= shipItem.Quantity;
-                stock.LastUpdated = DateTime.UtcNow;
-
-                // Create Movement
-                var movement = new StockMovement
-                {
-                    StockId = stock.Id,
-                    Type = MovementType.Outbound,
-                    Quantity = shipItem.Quantity,
-                    UnitCost = stock.AverageCost,
-                    Reference = order.OrderNumber,
-                    Notes = $"Shipment - Order {order.OrderNumber}"
-                };
-                _context.StockMovements.Add(movement);
+                await _ledger.IssueAsync(stockId.Value, line.Quantity, MovementType.Outbound,
+                    order.OrderNumber, $"Shipment - Order {order.OrderNumber}", ct);
             }
-
-            order.Status = OrderStatus.Shipped;
-            order.ShippedDate = DateTime.UtcNow;
-            
-            await _context.SaveChangesAsync();
-
-            await CreateInvoiceForOrderAsync(order.Id);
-
-            await transaction.CommitAsync();
-
-            return await GetOrderByIdAsync(order.Id) ?? throw new Exception("Error retrieving updated order");
+            catch (InsufficientStockException ex)
+            {
+                // add the human-readable product code the database does not know
+                throw new InsufficientStockException(orderItem.ProductId, orderItem.Product.Code, ex.RequiredQuantity, ex.AvailableQuantity);
+            }
         }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+
+        await CreateInvoiceForOrderAsync(order, ct);
+
+        await transaction.CommitAsync(ct);
+
+        return await GetOrderByIdAsync(orderId, ct) ?? throw new InvalidOperationException("Error retrieving updated order");
     }
 
-    public async Task<OrderDto?> GetOrderByIdAsync(int orderId)
+    public async Task<OrderDto?> GetOrderByIdAsync(int orderId, CancellationToken ct = default)
     {
-        var order = await _context.Orders
-            .Include(o => o.Items)
-                .ThenInclude(i => i.Product)
-            .Include(o => o.Items)
-                .ThenInclude(i => i.Warehouse)
-            .FirstOrDefaultAsync(o => o.Id == orderId);
+        var order = await _context.Orders.AsNoTracking()
+            .Include(o => o.Items).ThenInclude(i => i.Product)
+            .Include(o => o.Items).ThenInclude(i => i.Warehouse)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(o => o.Id == orderId, ct);
 
-        if (order == null)
-            return null;
+        return order == null ? null : ToDto(order);
+    }
 
-        return new OrderDto
+    public async Task<PagedResult<OrderDto>> GetOrdersAsync(int? page, int? pageSize, CancellationToken ct = default)
+    {
+        var (p, size) = Paging.Normalize(page, pageSize);
+
+        var total = await _context.Orders.CountAsync(ct);
+        var orders = await _context.Orders.AsNoTracking()
+            .OrderByDescending(o => o.OrderDate).ThenByDescending(o => o.Id)
+            .Skip((p - 1) * size).Take(size)
+            .Include(o => o.Items).ThenInclude(i => i.Product)
+            .Include(o => o.Items).ThenInclude(i => i.Warehouse)
+            .AsSplitQuery()
+            .ToListAsync(ct);
+
+        return new PagedResult<OrderDto>
         {
-            Id = order.Id,
-            OrderNumber = order.OrderNumber,
-            CustomerName = order.CustomerName,
-            CustomerEmail = order.CustomerEmail,
-            CustomerAddress = order.CustomerAddress,
-            Status = order.Status.ToString(),
-            OrderDate = order.OrderDate,
-            SubTotal = order.SubTotal,
-            TaxAmount = order.TaxAmount,
-            TotalAmount = order.TotalAmount,
-            Items = order.Items.Select(i => new OrderItemDto
-            {
-                Id = i.Id,
-                ProductId = i.ProductId,
-                ProductCode = i.Product.Code,
-                ProductName = i.Product.Name,
-                WarehouseId = i.WarehouseId,
-                WarehouseName = i.Warehouse.Name,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice,
-                Discount = i.Discount,
-                LineTotal = i.LineTotal
-            }).ToList()
+            Items = orders.Select(ToDto).ToList(),
+            Page = p,
+            PageSize = size,
+            TotalCount = total
         };
     }
 
-    public async Task<List<OrderDto>> GetAllOrdersAsync()
+    private async Task CreateInvoiceForOrderAsync(Order order, CancellationToken ct)
     {
-        var orders = await _context.Orders
-            .Include(o => o.Items)
-                .ThenInclude(i => i.Product)
-            .Include(o => o.Items)
-                .ThenInclude(i => i.Warehouse)
-            .OrderByDescending(o => o.OrderDate)
-            .ToListAsync();
-
-        return orders.Select(order => new OrderDto
-        {
-            Id = order.Id,
-            OrderNumber = order.OrderNumber,
-            CustomerName = order.CustomerName,
-            CustomerEmail = order.CustomerEmail,
-            CustomerAddress = order.CustomerAddress,
-            Status = order.Status.ToString(),
-            OrderDate = order.OrderDate,
-            SubTotal = order.SubTotal,
-            TaxAmount = order.TaxAmount,
-            TotalAmount = order.TotalAmount,
-            Items = order.Items.Select(i => new OrderItemDto
-            {
-                Id = i.Id,
-                ProductId = i.ProductId,
-                ProductCode = i.Product.Code,
-                ProductName = i.Product.Name,
-                WarehouseId = i.WarehouseId,
-                WarehouseName = i.Warehouse.Name,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice,
-                Discount = i.Discount,
-                LineTotal = i.LineTotal
-            }).ToList()
-        }).ToList();
-    }
-
-    private async Task<string> GenerateOrderNumberAsync()
-    {
-        var today = DateTime.UtcNow;
-        var prefix = $"CMD-{today:yyyyMMdd}-";
-        var lastOrder = await _context.Orders
-            .Where(o => o.OrderNumber.StartsWith(prefix))
-            .OrderByDescending(o => o.OrderNumber)
-            .FirstOrDefaultAsync();
-
-        int sequence = 1;
-        if (lastOrder != null)
-        {
-            var lastSequence = lastOrder.OrderNumber.Substring(prefix.Length);
-            if (int.TryParse(lastSequence, out var lastSeq))
-            {
-                sequence = lastSeq + 1;
-            }
-        }
-
-        return $"{prefix}{sequence:D4}";
-    }
-
-    private async Task CreateInvoiceForOrderAsync(int orderId)
-    {
-        var order = await _context.Orders
-            .Include(o => o.Items)
-                .ThenInclude(i => i.Product)
-            .FirstOrDefaultAsync(o => o.Id == orderId);
-
-        if (order == null || order.Invoice != null)
-            return;
-
-        var invoiceNumber = await GenerateInvoiceNumberAsync();
+        // The order claim in ShipOrderAsync already guarantees this runs at most once per order;
+        // this check is belt and braces (Invoice.OrderId is also unique in the model).
+        if (await _context.Invoices.AnyAsync(i => i.OrderId == order.Id, ct)) return;
 
         var invoice = new Invoice
         {
-            OrderId = orderId,
-            InvoiceNumber = invoiceNumber,
+            OrderId = order.Id,
+            InvoiceNumber = await _ledger.NextNumberAsync("invoice", ct),
             InvoiceDate = DateTime.UtcNow,
             DueDate = DateTime.UtcNow.AddDays(30),
             Status = InvoiceStatus.Issued,
@@ -281,7 +234,7 @@ public class OrderService : IOrderService
 
         foreach (var orderItem in order.Items)
         {
-            var invoiceItem = new InvoiceItem
+            invoice.Items.Add(new InvoiceItem
             {
                 Invoice = invoice,
                 ProductId = orderItem.ProductId,
@@ -292,35 +245,37 @@ public class OrderService : IOrderService
                 Discount = orderItem.Discount,
                 TaxRate = order.TaxRate,
                 LineTotal = orderItem.LineTotal
-            };
-
-            invoice.Items.Add(invoiceItem);
+            });
         }
 
         _context.Invoices.Add(invoice);
-        await _context.SaveChangesAsync();
+        await _context.SaveChangesAsync(ct);
     }
 
-    private async Task<string> GenerateInvoiceNumberAsync()
+    private static OrderDto ToDto(Order order) => new()
     {
-        var today = DateTime.UtcNow;
-        var prefix = $"FAC-{today:yyyyMMdd}-";
-        var lastInvoice = await _context.Invoices
-            .Where(i => i.InvoiceNumber.StartsWith(prefix))
-            .OrderByDescending(i => i.InvoiceNumber)
-            .FirstOrDefaultAsync();
-
-        int sequence = 1;
-        if (lastInvoice != null)
+        Id = order.Id,
+        OrderNumber = order.OrderNumber,
+        CustomerName = order.CustomerName,
+        CustomerEmail = order.CustomerEmail,
+        CustomerAddress = order.CustomerAddress,
+        Status = order.Status.ToString(),
+        OrderDate = order.OrderDate,
+        SubTotal = order.SubTotal,
+        TaxAmount = order.TaxAmount,
+        TotalAmount = order.TotalAmount,
+        Items = order.Items.Select(i => new OrderItemDto
         {
-            var lastSequence = lastInvoice.InvoiceNumber.Substring(prefix.Length);
-            if (int.TryParse(lastSequence, out var lastSeq))
-            {
-                sequence = lastSeq + 1;
-            }
-        }
-
-        return $"{prefix}{sequence:D4}";
-    }
+            Id = i.Id,
+            ProductId = i.ProductId,
+            ProductCode = i.Product.Code,
+            ProductName = i.Product.Name,
+            WarehouseId = i.WarehouseId,
+            WarehouseName = i.Warehouse.Name,
+            Quantity = i.Quantity,
+            UnitPrice = i.UnitPrice,
+            Discount = i.Discount,
+            LineTotal = i.LineTotal
+        }).ToList()
+    };
 }
-

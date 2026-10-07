@@ -18,59 +18,33 @@ Le projet suit une architecture en couches (Clean Architecture) :
 
 ## Configuration
 
-### 1. Base de données PostgreSQL
+Secrets come from environment variables / `appsettings.json` (copy `appsettings.json.example`; never commit the real file):
 
-Assurez-vous que PostgreSQL est installé et en cours d'exécution.
+| Setting | Purpose |
+|---|---|
+| `ConnectionStrings__DefaultConnection` | PostgreSQL |
+| `JwtSettings__SecretKey` | >= 32 chars; the API refuses to start without it |
+| `WMS_ADMIN_PASSWORD` | creates the first `admin` user when the table is empty (min 8 chars) |
+| `SeedDemoData` | `true` loads the demo catalogue (default: only in Development) |
+| `Cors__Origins__0` ... | allowed browser origins |
 
-Créez une base de données :
+Migrations are applied automatically at startup (they include `Sql/stock_integrity.sql`).
 
-```sql
-CREATE DATABASE wms_db;
-```
-
-### 2. Chaîne de connexion
-
-Modifiez le fichier `WMS.API/appsettings.json` avec vos paramètres PostgreSQL :
-
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Port=5432;Database=wms_db;Username=postgres;Password=votre_mot_de_passe"
-  }
-}
-```
-
-### 3. Installation des dépendances
+## Run
 
 ```bash
-cd backend-csharp
-dotnet restore
+export ConnectionStrings__DefaultConnection="Host=localhost;Database=wms_db;Username=postgres;Password=..."
+export JwtSettings__SecretKey="<>=32 random chars>"
+export WMS_ADMIN_PASSWORD="<min 8 chars>"
+cd WMS.API && dotnet run   # Swagger at /swagger, health at /health
 ```
 
-## Exécution
-
-```bash
-cd WMS.API
-dotnet run
-```
-
-L'API sera accessible sur :
-- HTTP: http://localhost:5000
-- HTTPS: https://localhost:5001
-- Swagger UI: http://localhost:5000/swagger
-
-## Initialisation de la base de données
-
-Lors du premier démarrage, la base de données sera automatiquement créée et initialisée avec des données de test :
-- 2 entrepôts
-- 2 emplacements
-- 5 produits
-- Stocks initiaux pour chaque produit
+Tests: `dotnet test` (needs PostgreSQL; set `WMS_TEST_CONNECTION`).
 
 ## Endpoints principaux
 
 ### Commandes
-- `POST /api/orders` - Créer une commande (décrémente automatiquement le stock)
+- `POST /api/orders` - Create an order (supports Idempotency-Key header; stock is issued on ship)
 - `GET /api/orders` - Liste de toutes les commandes
 - `GET /api/orders/{id}` - Détails d'une commande
 
@@ -184,8 +158,3 @@ Pour appliquer les migrations :
 ```bash
 dotnet ef database update --project ../WMS.Data
 ```
-
-## Support
-
-Pour toute question ou problème, consultez la documentation ou contactez l'équipe de développement.
-

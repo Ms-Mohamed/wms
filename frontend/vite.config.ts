@@ -15,7 +15,7 @@ export default defineConfig({
       '/python-api': {
         target: process.env.VITE_PYTHON_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/python-api/, '/api/analytics')
+        rewrite: (path) => path.replace(/^\/python-api/, '')  // same mapping as nginx.conf: the analytics service serves from /
       }
     }
   }

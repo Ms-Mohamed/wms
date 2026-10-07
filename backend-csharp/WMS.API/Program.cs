@@ -1,15 +1,23 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Localization;
 using Microsoft.IdentityModel.Tokens;
-// using Microsoft.OpenApi.Models;
-// using Swashbuckle.AspNetCore.Filters;
 using System.Globalization;
+using System.IO.Compression;
 using System.Text;
 using WMS.Business.Services;
 using WMS.Data;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// ---- Secrets: fail fast instead of silently running with a known key -----------------------------
+var jwtSecret = builder.Configuration["JwtSettings:SecretKey"];
+if (string.IsNullOrWhiteSpace(jwtSecret) || jwtSecret.Length < 32)
+{
+    throw new InvalidOperationException(
+        "JwtSettings:SecretKey is missing or shorter than 32 characters. " +
+        "Set the JwtSettings__SecretKey environment variable (see .env.example).");
+}
 
 // Add services to the container
 builder.Services.AddControllers()
@@ -19,18 +27,18 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options => {
-    // options.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
-    // {
-    //     Description = "Standard Authorization header using the Bearer scheme (\"bearer {token}\")",
-    //     In = ParameterLocation.Header,
-    //     Name = "Authorization",
-    //     Type = SecuritySchemeType.ApiKey
-    // });
-    
-    // options.OperationFilter<SecurityRequirementsOperationFilter>();
+builder.Services.AddSwaggerGen(options =>
+{
     options.CustomSchemaIds(type => type.ToString());
 });
+
+// JSON compresses ~10x: matters on slow links and weak machines
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<GzipCompressionProvider>();
+});
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
 
 // Configure localization
 builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
@@ -42,14 +50,17 @@ builder.Services.Configure<RequestLocalizationOptions>(options =>
         .AddSupportedUICultures(supportedCultures);
 });
 
-// Configure CORS
+// Configure CORS (origins from configuration: Cors__Origins__0=https://app.example.com ...)
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
+                  ?? new[] { "http://localhost:3000", "http://localhost:5173", "http://localhost" };
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
     {
-        policy.WithOrigins("http://localhost:3000", "http://localhost:5173")
+        policy.WithOrigins(corsOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
+              .WithExposedHeaders("X-Total-Count")
               .AllowCredentials();
     });
 });
@@ -58,6 +69,7 @@ builder.Services.AddCors(options =>
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<WmsDbContext>(options =>
     options.UseNpgsql(connectionString));
+// Read endpoints use AsNoTracking() explicitly (less RAM/CPU); update endpoints rely on tracking.
 
 // Configure JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -66,17 +78,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
-                builder.Configuration.GetSection("JwtSettings:SecretKey").Value ?? "SuperSecretKeyForDevelopmentOnly123!")),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
             ValidateIssuer = false,
             ValidateAudience = false
         };
     });
 
 // Register services
+builder.Services.AddScoped<IStockLedger, StockLedger>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
-builder.Services.AddScoped<IStockService, StockService>();
 
 var app = builder.Build();
 
@@ -87,7 +98,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+app.UseResponseCompression();
+if (!app.Environment.IsDevelopment() || app.Configuration.GetValue("UseHttpsRedirection", false))
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("AllowReactApp");
 
 // Use localization
@@ -98,41 +113,58 @@ app.UseAuthentication(); // Important: avant Authorization
 app.UseAuthorization();
 app.MapControllers();
 
-// Ensure database is created and seeded
+// Liveness + DB readiness, used by docker healthcheck / monitoring
+app.MapGet("/health", async (WmsDbContext db, CancellationToken ct) =>
+    await db.Database.CanConnectAsync(ct)
+        ? Results.Ok(new { status = "ok" })
+        : Results.StatusCode(503)).AllowAnonymous();
+
+// Apply migrations (includes the integrity layer) and seed
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<WmsDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     try
     {
-        // For development purpose, we ensure it's created. 
-        // In product you might want to use Migrate()
-        // dbContext.Database.EnsureCreated();
-        
-        // Check if existing migrations need to be applied if EnsureCreated didn't do it (mixed mode issue)
         dbContext.Database.Migrate();
 
-        SeedData.SeedDatabase(dbContext);
+        // Demo catalogue only on request (never silently in production)
+        if (app.Configuration.GetValue("SeedDemoData", app.Environment.IsDevelopment()))
+        {
+            SeedData.SeedDatabase(dbContext);
+        }
 
-        // Seed Admin User if not exists
+        // First admin: the password MUST come from configuration. No default password.
         if (!dbContext.Users.Any())
         {
-            var adminUser = new WMS.Data.Entities.User
+            var adminPassword = app.Configuration["WMS_ADMIN_PASSWORD"];
+            if (string.IsNullOrWhiteSpace(adminPassword) || adminPassword.Length < 8)
             {
-                Username = "admin",
-                Email = "admin@wms.com",
-                Role = "Admin",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("password123"),
-                CreatedAt = DateTime.UtcNow
-            };
-            dbContext.Users.Add(adminUser);
-            dbContext.SaveChanges();
+                logger.LogWarning("No user exists and WMS_ADMIN_PASSWORD is not set (min 8 chars): no admin account was created.");
+            }
+            else
+            {
+                dbContext.Users.Add(new WMS.Data.Entities.User
+                {
+                    Username = "admin",
+                    Email = app.Configuration["WMS_ADMIN_EMAIL"] ?? "admin@wms.local",
+                    Role = "Admin",
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(adminPassword),
+                    CreatedAt = DateTime.UtcNow
+                });
+                dbContext.SaveChanges();
+                logger.LogInformation("Admin account created.");
+            }
         }
     }
     catch (Exception ex)
     {
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Une erreur est survenue lors de l'initialisation de la base de données");
+        // A service that cannot reach/migrate its database must not pretend to be healthy.
+        logger.LogCritical(ex, "Database initialisation failed");
+        throw;
     }
 }
 
 app.Run();
+
+public partial class Program { } // lets integration tests use WebApplicationFactory<Program>

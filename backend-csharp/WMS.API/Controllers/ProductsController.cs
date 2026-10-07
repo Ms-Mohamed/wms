@@ -25,36 +25,42 @@ public class ProductsController : ControllerBase
         _localizer = localizer;
     }
 
+    /// <summary>Paged: ?page=1&amp;pageSize=500 (default and max 500). Total in the X-Total-Count header.</summary>
     [HttpGet]
-    public async Task<ActionResult> GetAllProducts()
+    public async Task<ActionResult> GetAllProducts([FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
     {
         try
         {
-            var products = await _context.Products
-                .Include(p => p.Stocks)
-                .OrderBy(p => p.Name)
-                .Select(p => new
+            var (p, size) = Paging.Normalize(page, pageSize);
+
+            var query = _context.Products.AsNoTracking();
+            Response.Headers["X-Total-Count"] = (await query.CountAsync(ct)).ToString();
+
+            var products = await query
+                .OrderBy(x => x.Name).ThenBy(x => x.Id)
+                .Skip((p - 1) * size).Take(size)
+                .Select(x => new
                 {
-                    p.Id,
-                    p.Code,
-                    p.Name,
-                    p.Description,
-                    p.UnitPrice,
-                    p.CostPrice,
-                    p.Unit,
-                    p.RequiresLotTracking,
-                    p.RequiresSerialTracking,
-                    p.DefaultLocationId,
-                    StockQuantity = p.Stocks != null ? p.Stocks.Sum(s => s.Quantity) : 0
+                    x.Id,
+                    x.Code,
+                    x.Name,
+                    x.Description,
+                    x.UnitPrice,
+                    x.CostPrice,
+                    x.Unit,
+                    x.RequiresLotTracking,
+                    x.RequiresSerialTracking,
+                    x.DefaultLocationId,
+                    StockQuantity = x.Stocks.Sum(st => (decimal?)st.Quantity) ?? 0
                 })
-                .ToListAsync();
+                .ToListAsync(ct);
 
             return Ok(products);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erreur lors de la récupération des produits");
-            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des produits", details = ex.Message });
+            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des produits" });
         }
     }
 

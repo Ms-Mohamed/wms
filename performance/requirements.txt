@@ -1,2 +1,4 @@
 psycopg2-binary>=2.9
+psutil>=5.9
+PyJWT>=2.7
 

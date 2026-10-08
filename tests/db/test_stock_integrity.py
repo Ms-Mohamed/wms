@@ -413,13 +413,14 @@ def test_idempotency_keys_enforce_unique_key(db):
     apply_layer(db)
     # The migration we just added adds RequestHash
     # And IdempotencyKeys has a UNIQUE index on "Key"
-    db.execute("""
-        INSERT INTO "IdempotencyKeys" ("Key", "Scope", "RequestHash", "CreatedAt")
-        VALUES ('test-key-1', 'order.create', 'hash1', now())
-    """)
-    
-    with pytest.raises(psycopg.errors.UniqueViolation):
-        db.execute("""
+    with psycopg.connect(db, autocommit=True) as c:
+        c.execute("""
             INSERT INTO "IdempotencyKeys" ("Key", "Scope", "RequestHash", "CreatedAt")
-            VALUES ('test-key-1', 'order.create', 'hash2', now())
+            VALUES ('test-key-1', 'order.create', 'hash1', now())
         """)
+        
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            c.execute("""
+                INSERT INTO "IdempotencyKeys" ("Key", "Scope", "RequestHash", "CreatedAt")
+                VALUES ('test-key-1', 'order.create', 'hash2', now())
+            """)

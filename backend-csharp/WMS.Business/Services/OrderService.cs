@@ -42,7 +42,10 @@ public class OrderService : IOrderService
                     if (existing.RequestHash != null && existing.RequestHash != requestHash)
                         throw new ArgumentException("Idempotency key reused with different request body");
                     if (existing.ResourceId > 0)
+                    {
+                        await transaction.DisposeAsync();
                         return await GetOrderByIdAsync(existing.ResourceId.Value, ct) ?? throw new InvalidOperationException("Commande introuvable");
+                    }
                 }
                 // Unreachable: ResourceId is always set in the same transaction that created the key.
             }

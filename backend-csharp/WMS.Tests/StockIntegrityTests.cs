@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using WMS.API.Controllers;
 using WMS.Business.DTOs;
@@ -132,11 +133,14 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         var key = Guid.NewGuid().ToString();
 
         // Use same hash for all
-        var s = _services.CreateScope().ServiceProvider.GetRequiredService<WMS.Business.Services.IOrderService>();
         var dto = new CreateOrderDto { CustomerName = "Test", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 1 } } };
         var requestHash = "hashA";
 
-        var created = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => s.CreateOrderAsync(dto, key, requestHash)));
+        var created = await Task.WhenAll(Enumerable.Range(0, 6).Select(async _ =>
+        {
+            using var scope = _pg.NewScope();
+            return await scope.Orders.CreateOrderAsync(dto, key, requestHash);
+        }));
 
         Assert.Single(created.Select(o => o.Id).Distinct());
         await using var db = _pg.NewContext();
@@ -149,15 +153,18 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         var (productId, warehouseId, _, _) = await _pg.SeedStockAsync(5);
         var key = Guid.NewGuid().ToString();
 
-        var s = _services.CreateScope().ServiceProvider.GetRequiredService<WMS.Business.Services.IOrderService>();
         var dto1 = new CreateOrderDto { CustomerName = "Test", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 1 } } };
-        
-        await s.CreateOrderAsync(dto1, key, "hash1");
+        using (var scope1 = _pg.NewScope())
+        {
+            await scope1.Orders.CreateOrderAsync(dto1, key, "hash1");
+        }
 
         var dto2 = new CreateOrderDto { CustomerName = "Test2", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 2 } } };
-        
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => s.CreateOrderAsync(dto2, key, "hash2"));
-        Assert.Contains("Idempotency key reused with different request body", ex.Message);
+        using (var scope2 = _pg.NewScope())
+        {
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => scope2.Orders.CreateOrderAsync(dto2, key, "hash2"));
+            Assert.Contains("Idempotency key reused with different request body", ex.Message);
+        }
     }
 
     [Fact]
@@ -177,7 +184,9 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         await db.Database.ExecuteSqlRawAsync("INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"CreatedAt\") VALUES ('old-key', 'order.create', now() - interval '8 days') ON CONFLICT DO NOTHING");
         await db.Database.ExecuteSqlRawAsync("INSERT INTO \"IdempotencyKeys\" (\"Key\", \"Scope\", \"CreatedAt\") VALUES ('new-key', 'order.create', now()) ON CONFLICT DO NOTHING");
         
-        var serviceProvider = _services.CreateScope().ServiceProvider;
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddDbContext<WMS.Data.WmsDbContext>(o => o.UseNpgsql(_pg.ConnectionString));
+        var serviceProvider = services.BuildServiceProvider();
         var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<WMS.API.Services.IdempotencyCleanupService>();
         var cleanupService = new WMS.API.Services.IdempotencyCleanupService(serviceProvider, logger);
         

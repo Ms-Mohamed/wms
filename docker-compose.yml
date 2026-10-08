@@ -20,7 +20,7 @@ services:
       -c effective_cache_size=256MB
       -c work_mem=4MB
       -c maintenance_work_mem=64MB
-      -c max_connections=60
+      -c max_connections=200
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -97,15 +97,20 @@ services:
   test-dotnet:
     build:
       context: ./backend-csharp
+      dockerfile_inline: |
+        FROM mcr.microsoft.com/dotnet/sdk:8.0
+        WORKDIR /src
+        COPY . .
+        ENTRYPOINT ["dotnet", "test", "WMS.Tests/WMS.Tests.csproj", "--logger", "console;verbosity=normal"]
     profiles: [test]
     depends_on:
       db:
         condition: service_healthy
     environment:
-      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=wms_test;Username=postgres;Password=${POSTGRES_PASSWORD:-test};Include Error Detail=true
+      ConnectionStrings__DefaultConnection: Host=db;Port=5432;Database=postgres;Username=postgres;Password=${POSTGRES_PASSWORD:-test};Include Error Detail=true
+      WMS_TEST_CONNECTION: Host=db;Port=5432;Database=postgres;Username=postgres;Password=${POSTGRES_PASSWORD:-test};Include Error Detail=true
       JwtSettings__SecretKey: ${JWT_SECRET:-test_secret_key_32_chars_long}
       WMS_ADMIN_PASSWORD: ${WMS_ADMIN_PASSWORD:-admin}
-    command: ["dotnet", "test", "WMS.Tests"]
     networks: [wms-network]
 
   test-python-db:
@@ -122,7 +127,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      WMS_TEST_CONNECTION: host=db port=5432 dbname=wms_test user=postgres password=${POSTGRES_PASSWORD:-test}
+      WMS_TEST_DSN: host=db port=5432 dbname=postgres user=postgres password=${POSTGRES_PASSWORD:-test}
     networks: [wms-network]
 
   test-python-api:
@@ -142,10 +147,14 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: "5432"
-      DB_NAME: wms_test
+      DB_NAME: postgres
       DB_USER: postgres
       DB_PASSWORD: ${POSTGRES_PASSWORD:-test}
       JWT_SECRET: ${JWT_SECRET:-test_secret_key_32_chars_long}
+      WMS_TEST_HOST: db
+      WMS_TEST_PORT: "5432"
+      WMS_TEST_USER: postgres
+      WMS_TEST_PASSWORD: ${POSTGRES_PASSWORD:-test}
     networks: [wms-network]
 
 networks:

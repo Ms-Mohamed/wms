@@ -95,10 +95,11 @@ def seed_warehouses(conn, count, chunk_size, start_offset):
             "Paris",
             "France",
             True,
+            datetime.utcnow(),
         )
         for i in range(count)
     ]
-    columns = ["Code", "Name", "Address", "City", "Country", "IsActive"]
+    columns = ["Code", "Name", "Address", "City", "Country", "IsActive", "CreatedAt"]
     for chunk in chunked(rows, chunk_size):
         bulk_insert(conn, "Warehouses", columns, chunk, page_size=chunk_size)
 
@@ -115,9 +116,10 @@ def seed_locations(conn, warehouse_ids, per_warehouse, chunk_size):
                     f"Zone A - Rack {i+1:02d}",
                     "A",
                     True,
+                    datetime.utcnow(),
                 )
             )
-    columns = ["WarehouseId", "Code", "Name", "Zone", "IsActive"]
+    columns = ["WarehouseId", "Code", "Name", "Zone", "IsActive", "CreatedAt"]
     for chunk in chunked(rows, chunk_size):
         bulk_insert(conn, "Locations", columns, chunk, page_size=chunk_size)
 
@@ -164,10 +166,13 @@ def seed_customers(conn, count, chunk_size, start_offset):
             random_code("CUST", start_offset + i + 1),
             random_name("Client", start_offset + i + 1),
             random_email(start_offset + i + 1),
+            True,
+            datetime.utcnow(),
+            None,
         )
         for i in range(count)
     ]
-    columns = ["Code", "Name", "Email"]
+    columns = ["Code", "Name", "Email", "IsActive", "CreatedAt", "UpdatedAt"]
     for chunk in chunked(rows, chunk_size):
         bulk_insert(conn, "Customers", columns, chunk, page_size=chunk_size)
 
@@ -175,10 +180,12 @@ def seed_customers(conn, count, chunk_size, start_offset):
 def seed_stocks(conn, product_ids, warehouse_ids, coverage, chunk_size):
     total_pairs = len(product_ids) * len(warehouse_ids)
     target = int(total_pairs * coverage)
+    pairs = set()
+    while len(pairs) < target:
+        pairs.add((random.choice(product_ids), random.choice(warehouse_ids)))
+    
     rows = []
-    for _ in range(target):
-        pid = random.choice(product_ids)
-        wid = random.choice(warehouse_ids)
+    for pid, wid in pairs:
         qty = round(random.uniform(50, 5000), 2)
         reorder = round(qty * 0.1, 2)
         avg_cost = round(random.uniform(5, 800), 2)

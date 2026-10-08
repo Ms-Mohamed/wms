@@ -8,8 +8,9 @@ const MODE = (__ENV.MODE || 'polyglot').toLowerCase(); // polyglot | monolith
 const PRODUCT_MIN_ID = Number(__ENV.PRODUCT_MIN_ID || 1);
 const PRODUCT_MAX_ID = Number(__ENV.PRODUCT_MAX_ID || 100000);
 const WAREHOUSE_MIN_ID = Number(__ENV.WAREHOUSE_MIN_ID || 1);
-const WAREHOUSE_MAX_ID = Number(__ENV.WAREHOUSE_MAX_ID || 100);
+const WAREHOUSE_MAX_ID = Number(__ENV.WAREHOUSE_MAX_ID || 10);
 const PRODUCT_SAMPLE = Number(__ENV.PRODUCT_SAMPLE || 5000);
+const TOKEN = __ENV.TOKEN || '';
 
 const errors = new Rate('errors');
 
@@ -22,9 +23,9 @@ export const options = {
       preAllocatedVUs: 50,
       maxVUs: 500,
       stages: [
-        { target: 50, duration: '2m' },
-        { target: 200, duration: '3m' },
-        { target: 500, duration: '5m' },
+        { target: 50, duration: '20s' },
+        { target: 200, duration: '20s' },
+        { target: 500, duration: '20s' },
       ],
       exec: 'createOrder',
     },
@@ -35,9 +36,9 @@ export const options = {
       preAllocatedVUs: 50,
       maxVUs: 400,
       stages: [
-        { target: 100, duration: '2m' },
-        { target: 300, duration: '3m' },
-        { target: 400, duration: '5m' },
+        { target: 100, duration: '20s' },
+        { target: 300, duration: '20s' },
+        { target: 400, duration: '20s' },
       ],
       exec: 'readData',
     },
@@ -48,9 +49,9 @@ export const options = {
       preAllocatedVUs: 30,
       maxVUs: 200,
       stages: [
-        { target: 50, duration: '2m' },
-        { target: 150, duration: '3m' },
-        { target: 200, duration: '5m' },
+        { target: 50, duration: '20s' },
+        { target: 150, duration: '20s' },
+        { target: 200, duration: '20s' },
       ],
       exec: 'analyticsWorkload',
     },
@@ -90,7 +91,7 @@ function randomOrderPayload() {
 export function createOrder() {
   const payload = JSON.stringify(randomOrderPayload());
   const res = http.post(`${API_BASE}/api/orders`, payload, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TOKEN}` },
     tags: { endpoint: 'orders_post', mode: MODE },
   });
   const ok = check(res, {
@@ -101,11 +102,11 @@ export function createOrder() {
 }
 
 export function readData() {
-  const resProducts = http.get(`${API_BASE}/api/products`, { tags: { endpoint: 'products_get', mode: MODE } });
+  const resProducts = http.get(`${API_BASE}/api/products`, { headers: { 'Authorization': `Bearer ${TOKEN}` }, tags: { endpoint: 'products_get', mode: MODE } });
   const okProducts = check(resProducts, { 'products ok': (r) => r.status === 200 });
   if (!okProducts) errors.add(1);
 
-  const resStocks = http.get(`${API_BASE}/api/stocks`, { tags: { endpoint: 'stocks_get', mode: MODE } });
+  const resStocks = http.get(`${API_BASE}/api/stocks`, { headers: { 'Authorization': `Bearer ${TOKEN}` }, tags: { endpoint: 'stocks_get', mode: MODE } });
   const okStocks = check(resStocks, { 'stocks ok': (r) => r.status === 200 });
   if (!okStocks) errors.add(1);
 
@@ -118,17 +119,20 @@ export function analyticsWorkload() {
   if (MODE === 'monolith') {
     // Simulate analytics load hitting the transactional backend
     const res1 = http.get(`${API_BASE}/api/stocks/product/${pid}/warehouse/${randId(WAREHOUSE_MIN_ID, WAREHOUSE_MAX_ID)}`, {
+      headers: { 'Authorization': `Bearer ${TOKEN}` },
       tags: { endpoint: 'stocks_by_product', mode: MODE },
     });
-    const res2 = http.get(`${API_BASE}/api/orders`, { tags: { endpoint: 'orders_get', mode: MODE } });
+    const res2 = http.get(`${API_BASE}/api/orders`, { headers: { 'Authorization': `Bearer ${TOKEN}` }, tags: { endpoint: 'orders_get', mode: MODE } });
     const okMono = check(res1, { 'stocks monolith ok': (r) => r.status === 200 }) &&
       check(res2, { 'orders list ok': (r) => r.status === 200 });
     if (!okMono) errors.add(1);
   } else {
-    const resPred = http.get(`${ANALYTICS_BASE}/api/analytics/predict/${pid}`, {
+    const resPred = http.get(`${ANALYTICS_BASE}/predict/${pid}`, {
+      headers: { 'Authorization': `Bearer ${TOKEN}` },
       tags: { endpoint: 'predict', mode: MODE },
     });
-    const resOpt = http.get(`${ANALYTICS_BASE}/api/analytics/optimize/${pid}`, {
+    const resOpt = http.get(`${ANALYTICS_BASE}/optimize/${pid}`, {
+      headers: { 'Authorization': `Bearer ${TOKEN}` },
       tags: { endpoint: 'optimize', mode: MODE },
     });
     const okPred = check(resPred, { 'predict ok': (r) => r.status === 200 });

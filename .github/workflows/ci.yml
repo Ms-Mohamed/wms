@@ -6,8 +6,14 @@ on:
 
 jobs:
   test-suite:
-    name: Full Test Suite
+    name: Full Test Suite (Postgres ${{ matrix.postgres-tag }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-tag: ["14-alpine", "16-alpine"]
+    env:
+      POSTGRES_IMAGE_TAG: ${{ matrix.postgres-tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Run all tests via Docker Compose test profile

@@ -6,7 +6,7 @@ name: wms
 
 services:
   db:
-    image: postgres:14-alpine
+    image: postgres:${POSTGRES_IMAGE_TAG:-14-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres

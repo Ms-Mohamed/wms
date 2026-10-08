@@ -368,9 +368,11 @@ def main():
         args.chunk_size,
     )
 
+    print("[INFO] Updating database statistics...")
+    conn.execute("ANALYZE;")
+
     conn.close()
     print("[DONE] Data generation completed.")
-
 
 if __name__ == "__main__":
     main()

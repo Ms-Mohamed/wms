@@ -95,3 +95,40 @@ Each scenario ramps virtual users (VUs) up to stress levels; adjust via env vars
 - Ensure PostgreSQL shared buffers/checkpoint settings are sized for the dataset.
 - Disable debug logs during load to reduce noise.
 
+## Investigated: "bench_analytics.py gives ~0.7 req/s" reports
+If `bench_analytics.py bench` reports sub-1 req/s, check these in order before assuming the
+database is slow - every one of them produces symptoms that look like "everything is slow"
+from the outside:
+
+1. **Wrong database.** `bench` assumes `DB_NAME` holds the `seed_analytics_bench.sql` dataset
+   (100k products) and samples random product IDs in `range(1, 3000)`. Pointed at the small
+   demo `wms_db` (a handful of products), ~99.9% of requests 404 fast and the reported
+   `req_per_sec` is misleadingly high while `errors` is almost equal to `requests` - read the
+   `errors` field, not just throughput.
+2. **Stale planner stats after bulk load.** `data_generator.py` now runs `ANALYZE;` after
+   seeding (see the "update statistics after bulk generation" commit). Without it, Postgres
+   can pick a sequential scan over `Orders`/`OrderItems` instead of `ix_orders_orderdate` /
+   `ix_orderitems_product_order`, confirmed with `EXPLAIN (ANALYZE, BUFFERS)` on the
+   `/predict` query. If you ever regenerate data with an older copy of the generator, run
+   `ANALYZE;` manually before benchmarking.
+3. **Thread count vs connection pool.** The benchmark's `--threads` should not exceed
+   `DB_POOL_MAX` (6 in `docker-compose.yml` for `wms-analytics`). With more worker threads
+   than pool connections, excess requests queue on the pool's semaphore
+   (`DB_POOL_WAIT_SECONDS`, default 5s) instead of failing, which can look like "everything
+   got slow" under load. Match `--threads` to `DB_POOL_MAX`, or raise `DB_POOL_MAX` for the
+   benchmark run.
+4. **Where it's being run from.** `bench_analytics.py` starts the service as a native
+   subprocess and talks to it with `urllib.request` (new TCP connection per call, no
+   keep-alive). Run it from the same OS/filesystem as the service and database - on
+   Windows+WSL2, invoking it from PowerShell against a WSL2-hosted Postgres (or vice versa)
+   crosses a virtualized network boundary per connection; we could not reproduce this
+   ourselves from WSL, so if you still see sub-1 req/s after 1-3, run `bench_analytics.py`
+   from inside the same environment (WSL shell) as the one running `docker compose`.
+
+With a correctly-seeded database and current code, measured results on this project's dev
+box: 123-193 req/s, p50 35-70ms, 0 errors, 8 threads/VUs - both via the native benchmark
+client and via k6 run inside the `wmsfinal` compose network against the containerized
+service. We were not able to reproduce a ~0.7 req/s result; if you can, capture
+`docker stats --no-stream` and `top -b -n1` during the run and compare against the numbers
+above.
+

@@ -122,5 +122,5 @@ Analytics (`/python-api` via nginx, same JWT): `GET stats` · `sales-history` ·
 - **The React tables have no pagination UI yet.** The API caps at 500 rows per request, so screens beyond 500 rows need pagination added in the UI. The dashboard no longer depends on it.
 - Roles: only account creation is Admin-restricted; other endpoints are open to any authenticated user.
 - Lots / serial numbers exist in the schema but are not wired into the ledger.
-- Tested on PostgreSQL 16; the SQL uses nothing newer than 14, but 14/15 were not run.
+- The test suites ran on PostgreSQL 16 only. `docker-compose.yml` pins `postgres:14-alpine` so existing data volumes keep working (Postgres cannot open a volume written by another major version); the SQL uses nothing newer than 14, but run the three suites against 14 before relying on it. To move an existing volume to 16: `pg_dump` from the 14 container, start a fresh 16 volume, restore.
 - Older design notes in `ARCHITECTURE.md`, `HOW_IT_WORKS.md` and friends predate this hardening and may disagree with this README — this file is the reference.

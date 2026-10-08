@@ -424,3 +424,15 @@ def test_idempotency_keys_enforce_unique_key(db):
                 INSERT INTO "IdempotencyKeys" ("Key", "Scope", "RequestHash", "CreatedAt")
                 VALUES ('test-key-1', 'order.create', 'hash2', now())
             """)
+
+
+def test_drift_view_reports_orphan_movements(db):
+    """A ledger with no stock row must show up as drift (FK dropped to simulate a damaged DB)."""
+    apply_layer(db)
+    sid = new_stock(db, 5)
+    assert drift(db) == []
+    with psycopg.connect(db, autocommit=True) as c:
+        c.execute('ALTER TABLE "StockMovements" DROP CONSTRAINT IF EXISTS "StockMovements_StockId_fkey"')
+        c.execute('DELETE FROM "Stocks" WHERE "Id" = %s', (sid,))
+    rows = drift(db)
+    assert len(rows) == 1 and rows[0][0] == sid and rows[0][1] == 0 and rows[0][2] == 5

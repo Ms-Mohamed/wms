@@ -303,10 +303,10 @@ END $$;
 -- 8. Reconciliation: rows returned here are BUGS. Must always be empty.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW wms_stock_drift AS
-SELECT s."Id" AS stock_id,
-       s."Quantity" AS stock_quantity,
-       COALESCE(SUM(m."Delta"),0) AS ledger_quantity
+SELECT COALESCE(s."Id", m."StockId") AS stock_id,
+       COALESCE(s."Quantity", 0)     AS stock_quantity,
+       COALESCE(m.total, 0)          AS ledger_quantity
   FROM "Stocks" s
-  LEFT JOIN "StockMovements" m ON m."StockId" = s."Id"
- GROUP BY s."Id", s."Quantity"
-HAVING s."Quantity" <> COALESCE(SUM(m."Delta"),0);
+  FULL JOIN (SELECT "StockId", SUM("Delta") AS total
+               FROM "StockMovements" GROUP BY "StockId") m ON m."StockId" = s."Id"
+ WHERE COALESCE(s."Quantity", 0) <> COALESCE(m.total, 0);

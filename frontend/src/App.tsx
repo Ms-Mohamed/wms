@@ -13,13 +13,12 @@ const Invoice = lazy(() => import('./pages/Invoice'));
 const Suppliers = lazy(() => import('./pages/Suppliers'));
 const Locations = lazy(() => import('./pages/Locations')); // [NEW]
 const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'));
-const SalesOrders = lazy(() => import('./pages/SalesOrders'));
 const Returns = lazy(() => import('./pages/Returns')); // [NEW]
 
 // Loading component
 const LoadingSpinner = () => (
   <Center h="100vh">
-    <Spinner size="xl" color="blue.500" />
+    <Spinner size="xl" color="brand.500" />
   </Center>
 );
 
@@ -40,7 +39,7 @@ function App() {
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/orders" element={<Orders />} />
-                <Route path="/sales-orders" element={<SalesOrders />} />
+                <Route path="/sales-orders" element={<Navigate to="/orders" replace />} />
                 <Route path="/returns" element={<Returns />} /> {/* [NEW] */}
                 <Route path="/purchase-orders" element={<PurchaseOrders />} /> {/* [NEW] */}
                 <Route path="/products" element={<Products />} />

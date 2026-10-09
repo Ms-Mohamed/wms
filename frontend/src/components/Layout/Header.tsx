@@ -1,53 +1,43 @@
 import { memo, useCallback } from 'react';
-import { Box, Flex, Select, Text } from '@chakra-ui/react';
+import { Avatar, Flex, Menu, MenuButton, MenuDivider, MenuItem, MenuList, Select, Text } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
-import { GlobeAltIcon } from '@heroicons/react/24/outline';
+import { useAuth } from '../../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 const Header = memo(() => {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
-  const handleLanguageChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      const lang = e.target.value;
-      i18n.changeLanguage(lang);
-      localStorage.setItem('language', lang);
-    },
-    [i18n]
-  );
+  const onLang = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    i18n.changeLanguage(e.target.value);
+    localStorage.setItem('language', e.target.value);
+  }, [i18n]);
+
+  const name = user?.sub ?? '';
 
   return (
-    <Box
-      bg="white"
-      borderBottom="1px"
-      borderColor="gray.200"
-      px={6}
-      py={4}
-      shadow="sm"
-    >
-      <Flex justify="space-between" align="center">
-        <Text fontSize="2xl" fontWeight="bold" color="gray.800">
-          Warehouse Management System
-        </Text>
-        <Flex align="center" gap={4}>
+    <Flex as="header" h="56px" px={6} align="center" justify="flex-end" gap={3} bg="white" borderBottom="1px solid" borderColor="ink.100" flexShrink={0}>
+      <Select size="sm" w="auto" variant="filled" value={i18n.resolvedLanguage ?? i18n.language} onChange={onLang} aria-label="Language">
+        <option value="fr">FR</option>
+        <option value="en">EN</option>
+      </Select>
+      <Menu placement="bottom-end">
+        <MenuButton aria-label="Account">
           <Flex align="center" gap={2}>
-            <GlobeAltIcon style={{ width: 20, height: 20 }} />
-            <Select
-              value={i18n.language}
-              onChange={handleLanguageChange}
-              size="sm"
-              w="120px"
-            >
-              <option value="fr">Français</option>
-              <option value="en">English</option>
-            </Select>
+            <Avatar size="sm" name={name} bg="brand.100" color="brand.700" />
+            <Text display={{ base: 'none', sm: 'block' }} fontSize="sm" fontWeight={600}>{name}</Text>
           </Flex>
-        </Flex>
-      </Flex>
-    </Box>
+        </MenuButton>
+        <MenuList boxShadow="pop" borderRadius="lg">
+          <Text px={3} py={1} fontSize="xs" color="ink.500">{user?.role}</Text>
+          <MenuDivider />
+          <MenuItem onClick={() => { logout(); navigate('/login'); }}>{t('auth.logout')}</MenuItem>
+        </MenuList>
+      </Menu>
+    </Flex>
   );
 });
 
 Header.displayName = 'Header';
-
 export default Header;
-

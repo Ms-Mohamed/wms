@@ -29,6 +29,11 @@ import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { productsApi, locationsApi } from '../services/api';
 import type { Product } from '../types';
+import { usePaged } from '../hooks/usePaged';
+import Card from '../components/ui/Card';
+import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/ui/PageHeader';
+import Pagination from '../components/ui/Pagination';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 const Products = memo(() => {
@@ -53,10 +58,8 @@ const Products = memo(() => {
     queryFn: () => locationsApi.getAll().then(res => res.data),
   });
 
-  const { data: products } = useQuery({
-    queryKey: ['products'],
-    queryFn: () => productsApi.getAll().then(res => res.data),
-  });
+  const paged = usePaged<Product>('products', (p) => productsApi.getPage(p));
+  const products = paged.rows;
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<Product>) => productsApi.create(data).then(res => res.data),
@@ -134,49 +137,45 @@ const Products = memo(() => {
 
   return (
     <Box>
-      <Box mb={6} display="flex" justifyContent="space-between" alignItems="center">
-        <h1 style={{ fontSize: '2rem', fontWeight: 'bold' }}>{t('products.title')}</h1>
-        <Button
-          colorScheme="blue"
-          onClick={() => {
-            resetForm();
-            onOpen();
-          }}
-        >
-          {t('products.createProduct')}
-        </Button>
-      </Box>
+      <PageHeader
+        title={t('products.title')}
+        subtitle={`${paged.total}`}
+        actions={<Button onClick={() => { resetForm(); onOpen(); }}>{t('products.createProduct')}</Button>}
+      />
 
-      <Box bg="white" borderRadius="lg" boxShadow="md" overflow="hidden">
-        <Table variant="simple">
-          <Thead bg="gray.50">
+      <Card>
+        <Box overflowX="auto" opacity={paged.isPlaceholderData ? 0.6 : 1}>
+        <Table>
+          <Thead>
             <Tr>
               <Th>{t('products.code')}</Th>
               <Th>{t('products.name')}</Th>
-              <Th>{t('products.unitPrice')}</Th>
-              <Th>{t('products.stockQuantity')}</Th>
+              <Th isNumeric>{t('products.unitPrice')}</Th>
+              <Th isNumeric>{t('products.stockQuantity')}</Th>
               <Th>{t('common.actions')}</Th>
             </Tr>
           </Thead>
           <Tbody>
-            {products?.map((product) => (
+            {products.map((product) => (
               <Tr key={product.id}>
-                <Td>{product.code}</Td>
+                <Td fontWeight={600}>{product.code}</Td>
                 <Td>{product.name}</Td>
-                <Td>{product.unitPrice.toFixed(2)} €</Td>
-                <Td>{product.stockQuantity || 0}</Td>
+                <Td isNumeric>{product.unitPrice.toFixed(2)} €</Td>
+                <Td isNumeric>{product.stockQuantity || 0}</Td>
                 <Td>
                   <HStack spacing={2}>
                     <IconButton
                       aria-label="Edit"
                       icon={<Box as={PencilIcon} w={4} h={4} />}
                       size="sm"
+                      variant="ghost"
                       onClick={() => handleEdit(product)}
                     />
                     <IconButton
                       aria-label="Delete"
                       icon={<Box as={TrashIcon} w={4} h={4} />}
                       size="sm"
+                      variant="ghost"
                       colorScheme="red"
                       onClick={() => {
                         if (window.confirm(t('products.confirmDelete'))) {
@@ -190,7 +189,10 @@ const Products = memo(() => {
             ))}
           </Tbody>
         </Table>
-      </Box>
+        </Box>
+        {!paged.isLoading && products.length === 0 && <EmptyState>{t('products.empty')}</EmptyState>}
+        <Pagination page={paged.page} pageCount={paged.pageCount} pageSize={paged.pageSize} total={paged.total} onPage={paged.setPage} onPageSize={paged.setPageSize} />
+      </Card>
 
       <Modal isOpen={isOpen} onClose={onClose}>
         <ModalOverlay />
@@ -264,7 +266,6 @@ const Products = memo(() => {
             <HStack>
               <Button onClick={onClose}>{t('common.cancel')}</Button>
               <Button
-                colorScheme="blue"
                 onClick={handleSubmit}
                 isLoading={createMutation.isPending || updateMutation.isPending}
               >

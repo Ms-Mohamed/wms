@@ -1,75 +1,84 @@
-import { memo, useMemo } from 'react';
-import { Box, Grid, Stat, StatLabel, StatNumber, StatHelpText, useColorModeValue } from '@chakra-ui/react';
+import { memo } from 'react';
+import { Box, Flex, SimpleGrid, Table, Tbody, Td, Text, Th, Thead, Tr } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { analyticsApi, ordersApi } from '../services/api';
+import Card from '../components/ui/Card';
+import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/ui/PageHeader';
+import StatusBadge from '../components/ui/StatusBadge';
+
+function Kpi({ label, value, tone = 'ink.800', hint }: { label: string; value: string | number; tone?: string; hint?: string }) {
+  return (
+    <Card p={5}>
+      <Text fontSize="xs" fontWeight={600} color="ink.500">{label}</Text>
+      <Text mt={1} fontSize="3xl" fontWeight={700} letterSpacing="-0.03em" color={tone} lineHeight={1.1}>{value}</Text>
+      {hint && <Text mt={1} fontSize="xs" color="ink.400">{hint}</Text>}
+    </Card>
+  );
+}
 
 const Dashboard = memo(() => {
   const { t } = useTranslation();
-  const bgColor = useColorModeValue('white', 'gray.800');
+  const navigate = useNavigate();
 
-  // Server-side aggregates: the dashboard no longer downloads every row just to count it.
-  const { data: ordersTotal } = useQuery({
-    queryKey: ['orders', 'total'],
-    queryFn: () =>
-      ordersApi.getAll({ page: 1, pageSize: 1 }).then(res => Number(res.headers['x-total-count'] ?? 0)),
+  // Server-side aggregates and one page of rows: the dashboard never downloads a whole table.
+  const { data: recent } = useQuery({
+    queryKey: ['orders', 'recent'],
+    queryFn: () => ordersApi.getAll({ page: 1, pageSize: 6 }).then((r) => ({ rows: r.data, total: Number(r.headers['x-total-count'] ?? r.data.length) })),
   });
+  const { data: stats } = useQuery({ queryKey: ['analytics', 'stats'], queryFn: () => analyticsApi.getStats().then((r) => r.data) });
+  const { data: low } = useQuery({ queryKey: ['analytics', 'low-stock'], queryFn: () => analyticsApi.getLowStock().then((r) => r.data.items.slice(0, 6)) });
 
-  const { data: analytics } = useQuery({
-    queryKey: ['analytics', 'stats'],
-    queryFn: () => analyticsApi.getStats().then(res => res.data),
-  });
-
-  const stats = useMemo(
-    () => ({
-      totalOrders: ordersTotal ?? 0,
-      totalProducts: analytics?.total_products ?? 0,
-      totalStockValue: (analytics?.total_stock_value ?? 0).toFixed(2),
-      lowStockItems: analytics?.low_stock_count ?? 0,
-    }),
-    [ordersTotal, analytics],
-  );
+  const lowCount = stats?.low_stock_count ?? 0;
 
   return (
     <Box>
-      <Box mb={6}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '1rem' }}>
-          {t('nav.dashboard')}
-        </h1>
-      </Box>
+      <PageHeader title={t('nav.dashboard')} />
+      <SimpleGrid columns={{ base: 1, sm: 2, xl: 4 }} spacing={4} mb={6}>
+        <Kpi label={t('dashboard.totalOrders')} value={recent?.total ?? 0} />
+        <Kpi label={t('dashboard.totalProducts')} value={stats?.total_products ?? 0} />
+        <Kpi label={t('dashboard.stockValue')} value={`${(stats?.total_stock_value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })} €`} />
+        <Kpi label={t('dashboard.stockAlerts')} value={lowCount} tone={lowCount > 0 ? 'red.500' : 'green.500'} hint={t('dashboard.productsToReorder')} />
+      </SimpleGrid>
 
-      <Grid templateColumns="repeat(auto-fit, minmax(250px, 1fr))" gap={6} mb={6}>
-        <Stat bg={bgColor} p={6} borderRadius="lg" boxShadow="md">
-          <StatLabel>{t('nav.orders')}</StatLabel>
-          <StatNumber>{stats.totalOrders}</StatNumber>
-          <StatHelpText>{t('dashboard.totalOrders')}</StatHelpText>
-        </Stat>
+      <SimpleGrid columns={{ base: 1, xl: 5 }} spacing={4}>
+        <Card gridColumn={{ xl: 'span 3' }}>
+          <Flex px={5} py={4} justify="space-between" align="center">
+            <Text fontWeight={600}>{t('dashboard.recentOrders')}</Text>
+            <Text as="button" fontSize="sm" color="brand.600" fontWeight={600} onClick={() => navigate('/orders')}>{t('nav.orders')} →</Text>
+          </Flex>
+          <Box overflowX="auto">
+            <Table>
+              <Thead><Tr><Th>{t('orders.orderNumber')}</Th><Th>{t('orders.customerName')}</Th><Th>{t('orders.status')}</Th><Th isNumeric>{t('orders.total')}</Th></Tr></Thead>
+              <Tbody>
+                {recent?.rows.map((o) => (
+                  <Tr key={o.id} cursor="pointer" onClick={() => navigate('/orders')}>
+                    <Td fontWeight={600}>{o.orderNumber}</Td><Td>{o.customerName}</Td><Td><StatusBadge status={o.status} /></Td>
+                    <Td isNumeric>{o.totalAmount.toFixed(2)} €</Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          </Box>
+          {recent && recent.rows.length === 0 && <EmptyState>{t('orders.noOrders')}</EmptyState>}
+        </Card>
 
-        <Stat bg={bgColor} p={6} borderRadius="lg" boxShadow="md">
-          <StatLabel>{t('nav.products')}</StatLabel>
-          <StatNumber>{stats.totalProducts}</StatNumber>
-          <StatHelpText>{t('dashboard.totalProducts')}</StatHelpText>
-        </Stat>
-
-        <Stat bg={bgColor} p={6} borderRadius="lg" boxShadow="md">
-          <StatLabel>{t('dashboard.stockValue')}</StatLabel>
-          <StatNumber>{stats.totalStockValue} €</StatNumber>
-          <StatHelpText>{t('dashboard.totalValue')}</StatHelpText>
-        </Stat>
-
-        <Stat bg={bgColor} p={6} borderRadius="lg" boxShadow="md">
-          <StatLabel>{t('dashboard.stockAlerts')}</StatLabel>
-          <StatNumber color={stats.lowStockItems > 0 ? 'red.500' : 'green.500'}>
-            {stats.lowStockItems}
-          </StatNumber>
-          <StatHelpText>{t('dashboard.productsToReorder')}</StatHelpText>
-        </Stat>
-      </Grid>
+        <Card gridColumn={{ xl: 'span 2' }}>
+          <Flex px={5} py={4}><Text fontWeight={600}>{t('dashboard.lowStock')}</Text></Flex>
+          {low && low.length === 0 && <EmptyState>{t('dashboard.allGood')}</EmptyState>}
+          {low?.map((i) => (
+            <Flex key={i.id} px={5} py={3} borderTop="1px solid" borderColor="ink.100" justify="space-between" align="center">
+              <Box minW={0}><Text fontSize="sm" fontWeight={600} noOfLines={1}>{i.product_name}</Text><Text fontSize="xs" color="ink.400">{i.product_code}</Text></Box>
+              <Text fontSize="sm" color="red.500" fontWeight={700}>{i.current_stock} <Text as="span" color="ink.400" fontWeight={400}>/ {i.reorder_point}</Text></Text>
+            </Flex>
+          ))}
+        </Card>
+      </SimpleGrid>
     </Box>
   );
 });
 
 Dashboard.displayName = 'Dashboard';
-
 export default Dashboard;
-

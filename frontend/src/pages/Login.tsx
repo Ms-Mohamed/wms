@@ -1,100 +1,67 @@
 import { useState } from 'react';
-import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { Box, Button, Flex, FormControl, FormErrorMessage, FormLabel, Heading, Input, Text, VStack } from '@chakra-ui/react';
+import { useTranslation } from 'react-i18next';
+import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../services/api';
-import { useToast } from '@chakra-ui/react';
 
 export default function Login() {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const { login } = useAuth();
-    const navigate = useNavigate();
-    const location = useLocation();
-    const toast = useToast();
+  const { t } = useTranslation();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from?.pathname || '/';
 
-    const from = location.state?.from?.pathname || '/';
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const res = await apiClient.post('/auth/login', { username, password });
+      login(res.data.token);
+      navigate(from, { replace: true });
+    } catch {
+      setError(t('auth.invalid'));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        try {
-            const response = await apiClient.post('/auth/login', { username, password });
-            login(response.data.token);
-            toast({
-                title: 'Connexion réussie',
-                status: 'success',
-                duration: 3000,
-                isClosable: true,
-            });
-            navigate(from, { replace: true });
-        } catch (err: any) {
-            console.error(err);
-            setError('Identifiants invalides');
-            toast({
-                title: 'Erreur de connexion',
-                description: 'Identifiants invalides',
-                status: 'error',
-                duration: 3000,
-                isClosable: true,
-            });
-        }
-    };
-
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-md w-full space-y-8">
-                <div>
-                    <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-                        Connexion au WMS
-                    </h2>
-                </div>
-                <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-                    <input type="hidden" name="remember" value="true" />
-                    <div className="rounded-md shadow-sm -space-y-px">
-                        <div>
-                            <label htmlFor="username" className="sr-only">Nom d'utilisateur</label>
-                            <input
-                                id="username"
-                                name="username"
-                                type="text"
-                                required
-                                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                                placeholder="Nom d'utilisateur"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="password" className="sr-only">Mot de passe</label>
-                            <input
-                                id="password"
-                                name="password"
-                                type="password"
-                                required
-                                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                                placeholder="Mot de passe"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                            />
-                        </div>
-                    </div>
-
-                    {error && (
-                        <div className="text-red-500 text-sm text-center">
-                            {error}
-                        </div>
-                    )}
-
-                    <div>
-                        <button
-                            type="submit"
-                            className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        >
-                            Se connecter
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    );
+  return (
+    <Flex minH="100vh">
+      <Flex flex="1" display={{ base: 'none', lg: 'flex' }} bg="ink.900" color="white" direction="column" justify="space-between" p={12}>
+        <Flex align="center" gap={2.5}>
+          <Flex w={8} h={8} borderRadius="md" bg="brand.500" align="center" justify="center" fontWeight={800} fontSize="sm">W</Flex>
+          <Text fontWeight={700}>WMS</Text>
+        </Flex>
+        <Box maxW="440px">
+          <Heading size="xl" letterSpacing="-0.03em" lineHeight={1.1}>{t('auth.pitchTitle')}</Heading>
+          <Text mt={4} color="ink.300">{t('auth.pitchBody')}</Text>
+        </Box>
+        <Text fontSize="xs" color="ink.400">PostgreSQL · ASP.NET Core · FastAPI · React</Text>
+      </Flex>
+      <Flex flex="1" align="center" justify="center" p={6} bg="white">
+        <Box as="form" onSubmit={submit} w="100%" maxW="360px">
+          <Heading size="md" letterSpacing="-0.02em">{t('auth.title')}</Heading>
+          <Text mt={1} mb={7} color="ink.500" fontSize="sm">{t('auth.subtitle')}</Text>
+          <VStack spacing={4} align="stretch">
+            <FormControl isRequired>
+              <FormLabel>{t('auth.username')}</FormLabel>
+              <Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+            </FormControl>
+            <FormControl isRequired isInvalid={!!error}>
+              <FormLabel>{t('auth.password')}</FormLabel>
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+              <FormErrorMessage>{error}</FormErrorMessage>
+            </FormControl>
+            <Button type="submit" size="lg" isLoading={busy} mt={2}>{t('auth.submit')}</Button>
+          </VStack>
+        </Box>
+      </Flex>
+    </Flex>
+  );
 }

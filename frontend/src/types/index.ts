@@ -46,6 +46,8 @@ export interface OrderItem {
   warehouseId: number;
   warehouseName: string;
   quantity: number;
+  shippedQuantity: number;
+  reservedQuantity: number;
   unitPrice: number;
   discount: number;
   lineTotal: number;

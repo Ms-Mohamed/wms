@@ -1,86 +1,79 @@
-import { memo, useMemo } from 'react';
-import {
-  Box,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  Badge,
-  useColorModeValue,
-} from '@chakra-ui/react';
+import { memo } from 'react';
+import { Badge, Box, Table, Tbody, Td, Th, Thead, Tr, Text, Tooltip } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
-import { useQuery } from '@tanstack/react-query';
 import { stockApi } from '../services/api';
+import type { Stock as StockRow } from '../types';
+import { usePaged } from '../hooks/usePaged';
+import Card from '../components/ui/Card';
+import EmptyState from '../components/ui/EmptyState';
+import PageHeader from '../components/ui/PageHeader';
+import Pagination from '../components/ui/Pagination';
+
+const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
+
+/** On-hand split into reserved (held for an order) and free. */
+function Bar({ row }: { row: StockRow }) {
+  const total = row.quantity || 0;
+  const reservedPct = total > 0 ? Math.min(100, (row.reservedQuantity / total) * 100) : 0;
+  return (
+    <Tooltip hasArrow label={`${fmt(row.reservedQuantity)} reserved · ${fmt(row.availableQuantity)} free`}>
+      <Box w="96px" h="6px" borderRadius="full" bg="green.200" overflow="hidden">
+        <Box h="100%" w={`${reservedPct}%`} bg="brand.500" />
+      </Box>
+    </Tooltip>
+  );
+}
 
 const Stock = memo(() => {
   const { t } = useTranslation();
-  const bgColor = useColorModeValue('white', 'gray.800');
+  const paged = usePaged<StockRow>('stocks', (p) => stockApi.getPage(p));
 
-  const { data: stocks } = useQuery({
-    queryKey: ['stocks'],
-    queryFn: () => stockApi.getAll().then(res => res.data),
-  });
-
-  const getStockStatus = useMemo(() => {
-    return (stock: any) => {
-      if (stock.quantity <= stock.reorderPoint) {
-        return { color: 'red', label: t('stock.status.critical') };
-      }
-      if (stock.quantity <= stock.reorderPoint * 1.5) {
-        return { color: 'yellow', label: t('stock.status.warning') };
-      }
-      return { color: 'green', label: t('stock.status.normal') };
-    };
-  }, [t]);
+  const status = (s: StockRow) => {
+    if (s.availableQuantity <= s.reorderPoint) return { color: 'red', label: t('stock.status.critical') };
+    if (s.availableQuantity <= s.reorderPoint * 1.5) return { color: 'orange', label: t('stock.status.warning') };
+    return { color: 'green', label: t('stock.status.normal') };
+  };
 
   return (
     <Box>
-      <Box mb={6}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 'bold' }}>{t('stock.title')}</h1>
-      </Box>
-
-      <Box bg={bgColor} borderRadius="lg" boxShadow="md" overflow="hidden">
-        <Table variant="simple">
-          <Thead bg="gray.50">
-            <Tr>
-              <Th>{t('products.code')}</Th>
-              <Th>{t('products.name')}</Th>
-              <Th>{t('stock.warehouse')}</Th>
-              <Th>Emplacement</Th>
-              <Th>{t('stock.available')}</Th>
-              <Th>{t('stock.reserved')}</Th>
-              <Th>{t('stock.reorderPoint')}</Th>
-              <Th>{t('stock.status.label')}</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {stocks?.map((stock) => {
-              const status = getStockStatus(stock);
-              return (
-                <Tr key={stock.id}>
-                  <Td>{stock.productCode}</Td>
-                  <Td>{stock.productName}</Td>
-                  <Td>{stock.warehouseName}</Td>
-                  <Td>{stock.locationName || '-'}</Td>
-                  <Td>{stock.availableQuantity.toFixed(2)}</Td>
-                  <Td>{stock.reservedQuantity.toFixed(2)}</Td>
-                  <Td>{stock.reorderPoint.toFixed(2)}</Td>
-                  <Td>
-                    <Badge colorScheme={status.color}>{status.label}</Badge>
-                  </Td>
-                </Tr>
-              );
-            })}
-          </Tbody>
-        </Table>
-      </Box>
+      <PageHeader title={t('stock.title')} subtitle={`${paged.total}`} />
+      <Card>
+        <Box overflowX="auto" opacity={paged.isPlaceholderData ? 0.6 : 1} transition="opacity .15s">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>{t('products.code')}</Th><Th>{t('products.name')}</Th><Th>{t('stock.warehouse')}</Th><Th>{t('stock.location')}</Th>
+                <Th isNumeric>{t('stock.onHand')}</Th><Th isNumeric>{t('stock.reserved')}</Th><Th isNumeric>{t('stock.free')}</Th>
+                <Th />
+                <Th>{t('stock.status.label')}</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {paged.rows.map((s) => {
+                const st = status(s);
+                return (
+                  <Tr key={s.id}>
+                    <Td fontWeight={600}>{s.productCode}</Td>
+                    <Td>{s.productName}</Td>
+                    <Td color="ink.500">{s.warehouseName}</Td>
+                    <Td color="ink.500">{s.locationName || '—'}</Td>
+                    <Td isNumeric>{fmt(s.quantity)}</Td>
+                    <Td isNumeric><Text color={s.reservedQuantity > 0 ? 'brand.600' : 'ink.400'}>{fmt(s.reservedQuantity)}</Text></Td>
+                    <Td isNumeric fontWeight={600}>{fmt(s.availableQuantity)}</Td>
+                    <Td><Bar row={s} /></Td>
+                    <Td><Badge colorScheme={st.color} variant="subtle" borderRadius="full" px={2.5} textTransform="none">{st.label}</Badge></Td>
+                  </Tr>
+                );
+              })}
+            </Tbody>
+          </Table>
+        </Box>
+        {!paged.isLoading && paged.rows.length === 0 && <EmptyState>{t('stock.empty')}</EmptyState>}
+        <Pagination page={paged.page} pageCount={paged.pageCount} pageSize={paged.pageSize} total={paged.total} onPage={paged.setPage} onPageSize={paged.setPageSize} />
+      </Card>
     </Box>
   );
 });
 
 Stock.displayName = 'Stock';
-
 export default Stock;
-

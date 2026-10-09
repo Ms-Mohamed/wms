@@ -20,7 +20,17 @@
     "products": "Produits",
     "stock": "Stock",
     "analytics": "Analytique",
-    "invoices": "Factures"
+    "invoices": "Factures",
+    "purchases": "Achats",
+    "suppliers": "Fournisseurs",
+    "locations": "Emplacements",
+    "returns": "Retours",
+    "groups": {
+      "overview": "Vue d’ensemble",
+      "sales": "Ventes",
+      "supply": "Approvisionnement",
+      "inventory": "Inventaire"
+    }
   },
   "orders": {
     "title": "Gestion des Commandes",
@@ -52,8 +62,34 @@
       "processing": "En traitement",
       "shipped": "Expédiée",
       "delivered": "Livrée",
-      "cancelled": "Annulée"
-    }
+      "cancelled": "Annulée",
+      "partiallyshipped": "Partiellement expédiée"
+    },
+    "reserve": "Réserver le stock",
+    "ship": "Expédier",
+    "shipRemaining": "Expédier le reste",
+    "cancel": "Annuler la commande",
+    "details": "Détail de la commande",
+    "lines": "Lignes",
+    "ordered": "Commandé",
+    "reservedQty": "Réservé",
+    "shippedQty": "Expédié",
+    "remaining": "Reste",
+    "pickFrom": "Expédier depuis",
+    "reserved_ok": "Stock réservé",
+    "shipped_ok": "Expédition enregistrée",
+    "cancelled_ok": "Commande annulée",
+    "created_ok": "Commande créée",
+    "search": "Rechercher client ou numéro",
+    "allStatuses": "Tous les statuts",
+    "shortage": "Stock insuffisant pour {{product}}",
+    "cancelConfirm": "Annuler cette commande ? Les unités réservées retournent au stock libre.",
+    "nothingToShip": "Rien à expédier",
+    "noOrders": "Aucune commande.",
+    "newOrder": "Nouvelle commande",
+    "shipFromHint": "Choisissez un emplacement de stock par ligne.",
+    "close": "Fermer",
+    "partialNote": "Expédiée partiellement : la facture est émise à l’expédition de la dernière ligne."
   },
   "products": {
     "title": "Gestion des Produits",
@@ -67,7 +103,8 @@
     "stockQuantity": "Quantité en stock",
     "editProduct": "Modifier le produit",
     "deleteProduct": "Supprimer le produit",
-    "confirmDelete": "Êtes-vous sûr de vouloir supprimer ce produit ?"
+    "confirmDelete": "Êtes-vous sûr de vouloir supprimer ce produit ?",
+    "empty": "Aucun produit."
   },
   "stock": {
     "title": "Gestion du Stock",
@@ -82,7 +119,11 @@
       "critical": "Critique",
       "warning": "Attention",
       "normal": "Normal"
-    }
+    },
+    "onHand": "En stock",
+    "free": "Libre",
+    "search": "Rechercher produit ou entrepôt",
+    "empty": "Aucune ligne de stock."
   },
   "analytics": {
     "title": "Dashboard Analytique",
@@ -136,7 +177,21 @@
     "stockValue": "Valeur du Stock",
     "totalValue": "Valeur totale",
     "stockAlerts": "Alertes Stock",
-    "productsToReorder": "Produits à réapprovisionner"
+    "productsToReorder": "Produits à réapprovisionner",
+    "recentOrders": "Commandes récentes",
+    "lowStock": "Stock bas",
+    "allGood": "Rien sous le point de commande.",
+    "openOrders": "Commandes ouvertes"
+  },
+  "auth": {
+    "title": "Connexion",
+    "subtitle": "Utilisez votre compte WMS.",
+    "username": "Nom d’utilisateur",
+    "password": "Mot de passe",
+    "submit": "Se connecter",
+    "invalid": "Identifiants invalides",
+    "logout": "Se déconnecter",
+    "pitchTitle": "Un stock fiable à l’unité près.",
+    "pitchBody": "Chaque mouvement est une ligne de registre. Chaque réservation est une contrainte de base. Aucune survente."
   }
 }
-

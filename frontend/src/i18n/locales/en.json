@@ -20,7 +20,17 @@
     "products": "Products",
     "stock": "Stock",
     "analytics": "Analytics",
-    "invoices": "Invoices"
+    "invoices": "Invoices",
+    "purchases": "Purchases",
+    "suppliers": "Suppliers",
+    "locations": "Locations",
+    "returns": "Returns",
+    "groups": {
+      "overview": "Overview",
+      "sales": "Sales",
+      "supply": "Supply",
+      "inventory": "Inventory"
+    }
   },
   "orders": {
     "title": "Order Management",
@@ -52,8 +62,34 @@
       "processing": "Processing",
       "shipped": "Shipped",
       "delivered": "Delivered",
-      "cancelled": "Cancelled"
-    }
+      "cancelled": "Cancelled",
+      "partiallyshipped": "Partially shipped"
+    },
+    "reserve": "Reserve stock",
+    "ship": "Ship",
+    "shipRemaining": "Ship remaining",
+    "cancel": "Cancel order",
+    "details": "Order details",
+    "lines": "Lines",
+    "ordered": "Ordered",
+    "reservedQty": "Reserved",
+    "shippedQty": "Shipped",
+    "remaining": "Remaining",
+    "pickFrom": "Ship from",
+    "reserved_ok": "Stock reserved",
+    "shipped_ok": "Shipment recorded",
+    "cancelled_ok": "Order cancelled",
+    "created_ok": "Order created",
+    "search": "Search customer or number",
+    "allStatuses": "All statuses",
+    "shortage": "Not enough stock for {{product}}",
+    "cancelConfirm": "Cancel this order? Reserved units go back to free stock.",
+    "nothingToShip": "Nothing to ship",
+    "noOrders": "No orders match.",
+    "newOrder": "New order",
+    "shipFromHint": "Pick a stock location for each line.",
+    "close": "Close",
+    "partialNote": "Partially shipped: the invoice is issued when the last line ships."
   },
   "products": {
     "title": "Product Management",
@@ -67,7 +103,8 @@
     "stockQuantity": "Stock Quantity",
     "editProduct": "Edit Product",
     "deleteProduct": "Delete Product",
-    "confirmDelete": "Are you sure you want to delete this product?"
+    "confirmDelete": "Are you sure you want to delete this product?",
+    "empty": "No products."
   },
   "stock": {
     "title": "Stock Management",
@@ -82,7 +119,11 @@
       "critical": "Critical",
       "warning": "Warning",
       "normal": "Normal"
-    }
+    },
+    "onHand": "On hand",
+    "free": "Free",
+    "search": "Search product or warehouse",
+    "empty": "No stock rows."
   },
   "analytics": {
     "title": "Analytics Dashboard",
@@ -136,7 +177,21 @@
     "stockValue": "Stock Value",
     "totalValue": "Total value",
     "stockAlerts": "Stock Alerts",
-    "productsToReorder": "Products to reorder"
+    "productsToReorder": "Products to reorder",
+    "recentOrders": "Recent orders",
+    "lowStock": "Low stock",
+    "allGood": "Nothing below reorder point.",
+    "openOrders": "Open orders"
+  },
+  "auth": {
+    "title": "Sign in",
+    "subtitle": "Use your WMS account.",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "invalid": "Invalid credentials",
+    "logout": "Sign out",
+    "pitchTitle": "Stock you can trust to the unit.",
+    "pitchBody": "Every movement is a ledger row. Every reservation is a database constraint. Nothing oversells."
   }
 }
-

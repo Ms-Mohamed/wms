@@ -1,91 +1,75 @@
 import { memo, useMemo } from 'react';
-import { Box, VStack, Link, Text, useColorModeValue } from '@chakra-ui/react';
+import { Box, Flex, Text, VStack } from '@chakra-ui/react';
 import { useTranslation } from 'react-i18next';
-import { useLocation, Link as RouterLink } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import {
-  HomeIcon,
-  ShoppingCartIcon,
-  CubeIcon,
-  ChartBarIcon,
-  BeakerIcon,
-  TruckIcon,
-  ClipboardDocumentListIcon,
-  MapPinIcon,
+  Squares2X2Icon, ShoppingCartIcon, CubeIcon, ChartBarIcon, ArchiveBoxIcon,
+  TruckIcon, ClipboardDocumentListIcon, MapPinIcon, ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 
-interface NavItem {
-  path: string;
-  label: string;
-  icon: any;
-}
+interface NavItem { path: string; label: string; icon: typeof Squares2X2Icon }
+interface NavGroup { title: string; items: NavItem[] }
+
+export const SIDEBAR_WIDTH = '248px';
 
 const Sidebar = memo(() => {
   const { t } = useTranslation();
-  const location = useLocation();
-  const bgColor = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const activeBg = useColorModeValue('blue.50', 'blue.900');
-  const activeColor = useColorModeValue('blue.600', 'blue.300');
 
-  const navItems: NavItem[] = useMemo(
-    () => [
-      { path: '/dashboard', label: t('nav.dashboard'), icon: HomeIcon },
-      { path: '/purchase-orders', label: 'Achats', icon: ClipboardDocumentListIcon }, // [NEW]
-      { path: '/sales-orders', label: 'Ventes', icon: ShoppingCartIcon },
-      { path: '/orders', label: t('nav.orders'), icon: ShoppingCartIcon },
-      { path: '/suppliers', label: 'Fournisseurs', icon: TruckIcon }, // [NEW] Hardcoded label fallback
-      { path: '/products', label: t('nav.products'), icon: CubeIcon },
-      { path: '/stock', label: t('nav.stock'), icon: BeakerIcon },
-      { path: '/locations', label: 'Emplacements', icon: MapPinIcon }, // [NEW]
+  const groups: NavGroup[] = useMemo(() => [
+    { title: t('nav.groups.overview'), items: [
+      { path: '/dashboard', label: t('nav.dashboard'), icon: Squares2X2Icon },
       { path: '/analytics', label: t('nav.analytics'), icon: ChartBarIcon },
-    ],
-    [t]
-  );
+    ] },
+    { title: t('nav.groups.sales'), items: [
+      { path: '/orders', label: t('nav.orders'), icon: ShoppingCartIcon },
+      { path: '/returns', label: t('nav.returns'), icon: ArrowUturnLeftIcon },
+    ] },
+    { title: t('nav.groups.supply'), items: [
+      { path: '/purchase-orders', label: t('nav.purchases'), icon: ClipboardDocumentListIcon },
+      { path: '/suppliers', label: t('nav.suppliers'), icon: TruckIcon },
+    ] },
+    { title: t('nav.groups.inventory'), items: [
+      { path: '/products', label: t('nav.products'), icon: CubeIcon },
+      { path: '/stock', label: t('nav.stock'), icon: ArchiveBoxIcon },
+      { path: '/locations', label: t('nav.locations'), icon: MapPinIcon },
+    ] },
+  ], [t]);
 
   return (
-    <Box
-      w="250px"
-      h="100vh"
-      bg={bgColor}
-      borderRight="1px"
-      borderColor={borderColor}
-      p={4}
-      position="sticky"
-      top={0}
-    >
-      <VStack align="stretch" spacing={2}>
-        <Text fontSize="xl" fontWeight="bold" mb={4} color="blue.600">
-          WMS
-        </Text>
-        {navItems.map((item) => {
-          const isActive = location.pathname === item.path;
-          return (
-            <Link
-              key={item.path}
-              as={RouterLink}
-              to={item.path}
-              display="flex"
-              alignItems="center"
-              px={4}
-              py={3}
-              borderRadius="md"
-              bg={isActive ? activeBg : 'transparent'}
-              color={isActive ? activeColor : 'gray.700'}
-              fontWeight={isActive ? 'semibold' : 'normal'}
-              _hover={{
-                bg: isActive ? activeBg : 'gray.100',
-              }}
-            >
-              <Box as={item.icon} w={5} h={5} mr={3} />
-              {item.label}
-            </Link>
-          );
-        })}
+    <Box as="nav" aria-label="Main" w={SIDEBAR_WIDTH} flexShrink={0} h="100vh" bg="ink.900" color="ink.200" px={3} py={5} overflowY="auto" display={{ base: 'none', md: 'block' }}>
+      <Flex align="center" gap={2.5} px={3} mb={7}>
+        <Flex w={8} h={8} borderRadius="md" bg="brand.500" color="white" align="center" justify="center" fontWeight={800} fontSize="sm">W</Flex>
+        <Text fontWeight={700} color="white" letterSpacing="-0.01em">WMS</Text>
+      </Flex>
+      <VStack align="stretch" spacing={5}>
+        {groups.map((g) => (
+          <Box key={g.title}>
+            <Text px={3} mb={1.5} fontSize="11px" fontWeight={600} letterSpacing="0.08em" textTransform="uppercase" color="ink.400">{g.title}</Text>
+            <VStack align="stretch" spacing={0.5}>
+              {g.items.map((item) => (
+                <NavLink key={item.path} to={item.path} style={{ textDecoration: 'none' }}>
+                  {({ isActive }) => (
+                    <Flex
+                      align="center" gap={3} px={3} py={2} borderRadius="md" fontSize="sm"
+                      fontWeight={isActive ? 600 : 500}
+                      bg={isActive ? 'whiteAlpha.200' : 'transparent'}
+                      color={isActive ? 'white' : 'ink.300'}
+                      _hover={{ bg: isActive ? 'whiteAlpha.200' : 'whiteAlpha.100', color: 'white' }}
+                      transition="background .12s"
+                    >
+                      <item.icon width={18} height={18} />
+                      {item.label}
+                    </Flex>
+                  )}
+                </NavLink>
+              ))}
+            </VStack>
+          </Box>
+        ))}
       </VStack>
     </Box>
   );
 });
 
 Sidebar.displayName = 'Sidebar';
-
 export default Sidebar;

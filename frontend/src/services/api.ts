@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   Product,
   Order,
+  CreateOrderDto,
   Invoice,
   Stock,
   Warehouse,
@@ -84,6 +85,7 @@ analyticsClient.interceptors.response.use(
 // API Functions - Products
 export const productsApi = {
   getAll: () => apiClient.get<Product[]>('/products'),
+  getPage: (params: { page: number; pageSize: number }) => apiClient.get<Product[]>('/products', { params }),
   getById: (id: number) => apiClient.get<Product>(`/products/${id}`),
   create: (data: Partial<Product>) => apiClient.post<Product>('/products', data),
   update: (id: number, data: Partial<Product>) => apiClient.put<Product>(`/products/${id}`, data),
@@ -102,6 +104,7 @@ export const invoicesApi = {
 // API Functions - Stock
 export const stockApi = {
   getAll: () => apiClient.get<Stock[]>('/stocks'),
+  getPage: (params: { page: number; pageSize: number }) => apiClient.get<Stock[]>('/stocks', { params }),
   getByProductAndWarehouse: (productId: number, warehouseId: number) =>
     apiClient.get<Stock>(`/stocks/product/${productId}/warehouse/${warehouseId}`),
 };
@@ -150,9 +153,12 @@ export const purchaseOrdersApi = {
 
 export const ordersApi = {
   getAll: (params?: { page?: number; pageSize?: number }) => apiClient.get<Order[]>('/orders', { params }),
-  create: (data: any) => apiClient.post<Order>('/orders', data),
+  create: (data: CreateOrderDto, idempotencyKey?: string) =>
+    apiClient.post<Order>('/orders', data, idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined),
   ship: (id: number, data: { items: { orderItemId: number; locationId: number; quantity: number }[] }) => apiClient.post<Order>(`/orders/${id}/ship`, data),
   get: (id: number) => apiClient.get<Order>(`/orders/${id}`),
+  reserve: (id: number) => apiClient.post<Order>(`/orders/${id}/reserve`),
+  cancel: (id: number) => apiClient.post<Order>(`/orders/${id}/cancel`),
 };
 
 export const locationsApi = {

@@ -368,6 +368,19 @@ def get_low_stock(limit: int = Query(200, ge=1, le=1000), _user=Depends(require_
     return cached(f"low:{limit}", load)
 
 
+# Monthly sales of one product over the last 12 months. Kept as a constant so the plan test runs the exact text.
+# Needs ix_orderitems_product_order and ix_orders_id_cover (analytics_indexes.sql): with them the planner
+# probes only this product's orders (index-only) instead of scanning the whole Orders table.
+PREDICT_SQL = """
+    SELECT date_trunc('month', o."OrderDate")::date AS month, SUM(oi."Quantity") AS qty
+      FROM "OrderItems" oi JOIN "Orders" o ON o."Id" = oi."OrderId"
+     WHERE oi."ProductId" = %s
+       AND o."OrderDate" >= NOW() - INTERVAL '12 months'
+       AND o."Status" <> %s
+     GROUP BY 1 ORDER BY 1
+"""
+
+
 @app.get("/predict/{product_id}", response_model=DemandForecastResponse)
 def predict_demand(product_id: int, _user=Depends(require_user)):
     """Next-3-months demand: least-squares trend over the last 12 months of sales (min 3 months with sales)."""
@@ -377,14 +390,7 @@ def predict_demand(product_id: int, _user=Depends(require_user)):
         if not product:
             raise HTTPException(status_code=404, detail=f"Produit avec ID {product_id} introuvable")
 
-        cur.execute("""
-            SELECT date_trunc('month', o."OrderDate")::date AS month, SUM(oi."Quantity") AS qty
-              FROM "OrderItems" oi JOIN "Orders" o ON o."Id" = oi."OrderId"
-             WHERE oi."ProductId" = %s
-               AND o."OrderDate" >= NOW() - INTERVAL '12 months'
-               AND o."Status" <> %s
-             GROUP BY 1 ORDER BY 1
-        """, (product_id, ORDER_STATUS_CANCELLED))
+        cur.execute(PREDICT_SQL, (product_id, ORDER_STATUS_CANCELLED))
         rows = [(r["month"], float(r["qty"])) for r in cur.fetchall()]
 
     base = dict(product_id=product_id, product_code=product["Code"], product_name=product["Name"])

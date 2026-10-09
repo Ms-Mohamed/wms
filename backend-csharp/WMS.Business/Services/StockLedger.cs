@@ -14,6 +14,10 @@ public class StockLedger : IStockLedger
     private const string InvalidQuantity = "WMS02";
     private const string StockNotFound = "WMS03";
     private const string InvalidTransfer = "WMS04";
+    private const string OrderState = "WMS05";        // order not in a state that allows this
+    private const string OverShip = "WMS06";          // shipping more than remains on the line
+    private const string WrongProductStock = "WMS07"; // stock row belongs to another product
+    private const string CancelAfterShip = "WMS08";   // cannot cancel once units shipped
 
     private readonly WmsDbContext _db;
 
@@ -42,6 +46,20 @@ public class StockLedger : IStockLedger
     public Task<int> GetOrCreateStockIdAsync(int productId, int warehouseId, int? locationId, decimal reorderPoint = 0, CancellationToken ct = default)
         => RunAsync(() => ScalarAsync<int>(
             $"SELECT wms_stock_get_or_create({productId}, {warehouseId}, {locationId}, {reorderPoint}) AS \"Value\"", ct));
+
+    public Task<decimal> ReserveOrderAsync(int orderId, CancellationToken ct = default)
+        => RunAsync(() => ScalarAsync<decimal>($"SELECT wms_order_reserve({orderId}) AS \"Value\"", ct));
+
+    public Task<OrderStatus> ShipOrderLineAsync(int orderItemId, int stockId, decimal quantity, string? reference, CancellationToken ct = default)
+        => RunAsync(async () => (OrderStatus)await ScalarAsync<int>(
+            $"SELECT wms_order_ship_line({orderItemId}, {stockId}, {quantity}, {reference}) AS \"Value\"", ct));
+
+    public Task CancelOrderAsync(int orderId, CancellationToken ct = default)
+        => RunAsync(async () =>
+        {
+            await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT wms_order_cancel({orderId})", ct);
+            return 0;
+        });
 
     public Task<string> NextNumberAsync(string kind, CancellationToken ct = default)
         => RunAsync(() => ScalarAsync<string>($"SELECT wms_next_number({kind}) AS \"Value\"", ct));
@@ -83,7 +101,9 @@ public class StockLedger : IStockLedger
         {
             throw new KeyNotFoundException(ex.MessageText, ex);
         }
-        catch (PostgresException ex) when (ex.SqlState == InvalidTransfer)
+        catch (PostgresException ex) when (ex.SqlState == InvalidTransfer || ex.SqlState == OrderState
+                                           || ex.SqlState == OverShip || ex.SqlState == WrongProductStock
+                                           || ex.SqlState == CancelAfterShip)
         {
             throw new InvalidOperationException(ex.MessageText, ex);
         }

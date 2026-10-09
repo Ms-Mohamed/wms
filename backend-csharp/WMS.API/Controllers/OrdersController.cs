@@ -94,6 +94,51 @@ public class OrdersController : ControllerBase
         }
     }
 
+    /// <summary>Hold stock for every open line, all or nothing. 409 with the missing product if stock is short.</summary>
+    [HttpPost("{id}/reserve")]
+    public async Task<ActionResult<OrderDto>> ReserveOrder(int id, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _orderService.ReserveOrderAsync(id, ct));
+        }
+        catch (InsufficientStockException ex)
+        {
+            return Conflict(new
+            {
+                error = "Stock insuffisant",
+                productId = ex.ProductId,
+                productCode = ex.ProductCode,
+                requiredQuantity = ex.RequiredQuantity,
+                availableQuantity = ex.AvailableQuantity
+            });
+        }
+        catch (ArgumentException ex) { return NotFound(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la réservation de la commande");
+            return StatusCode(500, new { error = "Une erreur est survenue lors de la réservation" });
+        }
+    }
+
+    /// <summary>Cancel an order that has not shipped anything; its reservations are released.</summary>
+    [HttpPost("{id}/cancel")]
+    public async Task<ActionResult<OrderDto>> CancelOrder(int id, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await _orderService.CancelOrderAsync(id, ct));
+        }
+        catch (ArgumentException ex) { return NotFound(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de l'annulation de la commande");
+            return StatusCode(500, new { error = "Une erreur est survenue lors de l'annulation" });
+        }
+    }
+
     [HttpGet("{id}")]
     public async Task<ActionResult<OrderDto>> GetOrder(int id, CancellationToken ct)
     {

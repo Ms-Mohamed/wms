@@ -111,18 +111,92 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
     }
 
     [Fact]
-    public async Task Partial_shipments_and_foreign_lines_are_rejected_before_touching_stock()
+    public async Task Foreign_lines_and_zero_quantities_are_rejected_before_touching_stock()
     {
         var (productId, warehouseId, locationId, stockId) = await _pg.SeedStockAsync(10);
         var order = await CreateOrderAsync(productId, warehouseId, 4);
         using var s = _pg.NewScope();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => s.Orders.ShipOrderAsync(order.Id, new ShipOrderDto
-        { Items = { new ShipOrderItemDto { OrderItemId = order.Items[0].Id, LocationId = locationId, Quantity = 2 } } }));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => s.Orders.ShipOrderAsync(order.Id, new ShipOrderDto
         { Items = { new ShipOrderItemDto { OrderItemId = 999999, LocationId = locationId, Quantity = 4 } } }));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.Orders.ShipOrderAsync(order.Id, new ShipOrderDto
+        { Items = { new ShipOrderItemDto { OrderItemId = order.Items[0].Id, LocationId = locationId, Quantity = 0 } } }));
 
         Assert.Equal(10m, await _pg.QuantityAsync(stockId));
+    }
+
+    // ---- partial shipments and reservations ---------------------------------------------------
+    [Fact]
+    public async Task A_partial_shipment_keeps_the_order_open_and_the_last_one_completes_and_invoices_it()
+    {
+        var (productId, warehouseId, locationId, stockId) = await _pg.SeedStockAsync(10);
+        var order = await CreateOrderAsync(productId, warehouseId, 6);
+
+        ShipOrderDto Part(decimal q) => new() { Items = { new ShipOrderItemDto { OrderItemId = order.Items[0].Id, LocationId = locationId, Quantity = q } } };
+
+        using (var s = _pg.NewScope())
+        {
+            var afterFirst = await s.Orders.ShipOrderAsync(order.Id, Part(4));
+            Assert.Equal("PartiallyShipped", afterFirst.Status);
+            Assert.Equal(4m, afterFirst.Items[0].ShippedQuantity);
+        }
+        await using (var db = _pg.NewContext())
+            Assert.Equal(0, await db.Invoices.CountAsync(i => i.OrderId == order.Id));   // not invoiced yet
+
+        using (var s = _pg.NewScope())
+            Assert.Equal("Shipped", (await s.Orders.ShipOrderAsync(order.Id, Part(2))).Status);
+
+        await using (var db = _pg.NewContext())
+            Assert.Equal(1, await db.Invoices.CountAsync(i => i.OrderId == order.Id));
+        Assert.Equal(4m, await _pg.QuantityAsync(stockId));
+        Assert.Equal(0, await _pg.DriftRowsAsync());
+    }
+
+    [Fact]
+    public async Task Shipping_more_than_remains_on_a_line_is_refused()
+    {
+        var (productId, warehouseId, locationId, stockId) = await _pg.SeedStockAsync(10);
+        var order = await CreateOrderAsync(productId, warehouseId, 3);
+        ShipOrderDto Part(decimal q) => new() { Items = { new ShipOrderItemDto { OrderItemId = order.Items[0].Id, LocationId = locationId, Quantity = q } } };
+
+        using (var s = _pg.NewScope()) await s.Orders.ShipOrderAsync(order.Id, Part(2));
+        using (var s = _pg.NewScope())
+            await Assert.ThrowsAsync<InvalidOperationException>(() => s.Orders.ShipOrderAsync(order.Id, Part(2)));
+        Assert.Equal(8m, await _pg.QuantityAsync(stockId));
+    }
+
+    [Fact]
+    public async Task Reserved_units_cannot_be_shipped_by_another_order_and_cancel_gives_them_back()
+    {
+        var (productId, warehouseId, locationId, stockId) = await _pg.SeedStockAsync(5);
+        var holder = await CreateOrderAsync(productId, warehouseId, 4);
+        var other = await CreateOrderAsync(productId, warehouseId, 3);
+
+        using (var s = _pg.NewScope())
+            Assert.Equal(4m, (await s.Orders.ReserveOrderAsync(holder.Id)).Items[0].ReservedQuantity);
+
+        using (var s = _pg.NewScope())
+            await Assert.ThrowsAsync<InsufficientStockException>(() => s.Orders.ShipOrderAsync(other.Id, ShipAll(other, locationId)));
+
+        using (var s = _pg.NewScope())
+            Assert.Equal("Cancelled", (await s.Orders.CancelOrderAsync(holder.Id)).Status);
+
+        using (var s = _pg.NewScope())
+            Assert.Equal("Shipped", (await s.Orders.ShipOrderAsync(other.Id, ShipAll(other, locationId))).Status);
+        Assert.Equal(2m, await _pg.QuantityAsync(stockId));
+        Assert.Equal(0, await _pg.DriftRowsAsync());
+    }
+
+    [Fact]
+    public async Task Reserving_more_than_is_free_is_refused_and_holds_nothing()
+    {
+        var (productId, warehouseId, _, _) = await _pg.SeedStockAsync(2);
+        var order = await CreateOrderAsync(productId, warehouseId, 5);
+
+        using (var s = _pg.NewScope())
+            await Assert.ThrowsAsync<InsufficientStockException>(() => s.Orders.ReserveOrderAsync(order.Id));
+        using (var s = _pg.NewScope())
+            Assert.Equal(0m, (await s.Orders.GetOrderByIdAsync(order.Id))!.Items[0].ReservedQuantity);
     }
 
     // ---- idempotency & numbering --------------------------------------------------------------

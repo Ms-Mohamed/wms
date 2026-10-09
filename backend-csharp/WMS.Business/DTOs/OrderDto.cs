@@ -24,6 +24,9 @@ public class OrderItemDto
     public int WarehouseId { get; set; }
     public string WarehouseName { get; set; } = string.Empty;
     public decimal Quantity { get; set; }
+    public decimal ShippedQuantity { get; set; }
+    /// <summary>Units this line currently holds on stock rows (see POST /api/orders/{id}/reserve).</summary>
+    public decimal ReservedQuantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal Discount { get; set; }
     public decimal LineTotal { get; set; }

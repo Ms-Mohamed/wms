@@ -24,6 +24,15 @@ public interface IStockLedger
     /// <summary>Race-free find-or-create of the stock row for (product, warehouse, location).</summary>
     Task<int> GetOrCreateStockIdAsync(int productId, int warehouseId, int? locationId, decimal reorderPoint = 0, CancellationToken ct = default);
 
+    /// <summary>Reserve every open line of the order, all or nothing. Throws InsufficientStockException. Returns the quantity newly reserved.</summary>
+    Task<decimal> ReserveOrderAsync(int orderId, CancellationToken ct = default);
+
+    /// <summary>Ship part or all of one order line from one stock row. Returns the order status afterwards.</summary>
+    Task<OrderStatus> ShipOrderLineAsync(int orderItemId, int stockId, decimal quantity, string? reference, CancellationToken ct = default);
+
+    /// <summary>Cancel an order that has not shipped anything and release its reservations.</summary>
+    Task CancelOrderAsync(int orderId, CancellationToken ct = default);
+
     /// <summary>Next document number from a database sequence. kind: order | invoice | po | rma.</summary>
     Task<string> NextNumberAsync(string kind, CancellationToken ct = default);
 }

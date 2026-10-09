@@ -7,7 +7,9 @@ public enum OrderStatus
     Processing,
     Shipped,
     Delivered,
-    Cancelled
+    Cancelled,
+    /// <summary>Some lines shipped, others still open. Appended last so stored integers keep their meaning.</summary>
+    PartiallyShipped
 }
 
 public class Order

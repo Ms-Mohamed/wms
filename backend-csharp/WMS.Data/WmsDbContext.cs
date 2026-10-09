@@ -145,6 +145,7 @@ public class WmsDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Quantity).HasPrecision(18, 3);
+            entity.Property(e => e.ShippedQuantity).HasPrecision(18, 3);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
             entity.Property(e => e.UnitPriceAtSale).HasPrecision(18, 2);
             entity.Property(e => e.Discount).HasPrecision(18, 2);

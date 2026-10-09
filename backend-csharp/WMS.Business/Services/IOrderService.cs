@@ -10,6 +10,12 @@ public interface IOrderService
     /// <summary>Ships an order: all-or-nothing, concurrency-safe, one invoice. See OrderService.</summary>
     Task<OrderDto> ShipOrderAsync(int orderId, ShipOrderDto shipOrderDto, CancellationToken ct = default);
 
+    /// <summary>Hold stock for every open line, all or nothing (409 if short).</summary>
+    Task<OrderDto> ReserveOrderAsync(int orderId, CancellationToken ct = default);
+
+    /// <summary>Cancel an order that has not shipped anything; releases its reservations.</summary>
+    Task<OrderDto> CancelOrderAsync(int orderId, CancellationToken ct = default);
+
     Task<OrderDto?> GetOrderByIdAsync(int orderId, CancellationToken ct = default);
 
     Task<PagedResult<OrderDto>> GetOrdersAsync(int? page, int? pageSize, CancellationToken ct = default);

@@ -65,6 +65,17 @@ public class ReturnsController : ControllerBase
         return ret;
     }
 
+    // GET: api/Returns
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<ReturnOrder>>> GetReturns()
+    {
+        return await _context.ReturnOrders
+            .Include(r => r.Items)
+            .ThenInclude(i => i.Product)
+            .OrderByDescending(r => r.Id)
+            .ToListAsync();
+    }
+
     // POST: api/Returns/5/receive
     /// <summary>Receives a customer return. Claimed atomically (cannot be received twice); good items go back to stock through the ledger.</summary>
     [HttpPost("{id}/receive")]

@@ -79,7 +79,7 @@ public class AuthController : ControllerBase
             ?? throw new InvalidOperationException("JwtSettings:SecretKey is not configured");
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
 
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256Signature);
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
             claims: claims,

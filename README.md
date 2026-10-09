@@ -12,18 +12,21 @@ Every claim below has a test or a measurement you can re-run. Nothing here is "t
 
 | Claim | Proof | Status |
 |---|---|---|
-| Stock never oversells under concurrency | 100 parallel shippers on a 5-unit stock → **exactly 5 succeed**, 95 refused, stock = 0 (`tests/db`) | verified, 21 DB tests pass |
+| Stock never oversells under concurrency | 100 parallel shippers on a 5-unit stock → **exactly 5 succeed**, 95 refused, stock = 0 (`tests/db`) | verified, 36 DB tests pass |
 | The test is meaningful | Control experiment: the **original** read-check-write logic lets **20 of 20** shipments through on that same 5-unit stock | verified |
 | Ledger always equals stock | `Stock.Quantity = SUM(StockMovements.Delta)`; random multi-threaded receive/issue/adjust/transfer, then the `wms_stock_drift` view must be empty | verified |
 | No negative stock, even from raw SQL | `CHECK` constraints on `Stocks` | verified |
 | No deadlock on opposite transfers | 8 threads × 100 transfers A↔B | verified |
 | No duplicate document numbers | Postgres sequences, 40 concurrent callers | verified |
+| Reservations hold stock for one order | 30 parallel reservations on 10 units → **exactly 10 succeed**; a reserved unit cannot be shipped by another order; reserve is all-or-nothing | verified (`tests/db/test_reservations.py`) |
+| Partial shipments stay consistent | 20 parallel shipments on a 5-unit line → **exactly 5 succeed**; over-shipping refused; one invoice, issued when the last line completes | verified in SQL; C# service layer written, not yet executed (see note) |
+| Authorization matrix is enforced by tests | Python: every analytics route must answer 401 to no / forged / expired / `alg:none` tokens (a mutation that removes one `Depends` fails 6 tests). C#: reflection test over every controller action | Python verified; C# test written, not yet executed |
 | Same order shipped twice → once | Conditional `UPDATE ... WHERE Status IN (...)` claim + 8 parallel callers | xUnit test written (see note) |
 | Retried POST creates one order | `Idempotency-Key` header | xUnit test written (see note) |
 | Analytics service is light | 63–66 MB RAM vs 193–257 MB for the pandas/scikit-learn original, 3.4× throughput | measured, see below |
-| Analytics service cannot write | read-only DB role + read-only sessions; test attempts an `UPDATE` | verified, 21 analytics tests pass |
+| Analytics service cannot write | read-only DB role + read-only sessions; test attempts an `UPDATE` | verified, 30 analytics tests pass (22 behaviour + 8 authorization) |
 
-> **Note on the C# tests.** The 9 xUnit tests in `backend-csharp/WMS.Tests` run the real EF migrations on a real PostgreSQL. They were written in an environment that could not download NuGet packages, so they were **type-checked but not executed there**. The database behaviour they rely on is executed by the Python tests above (same SQL file). CI (`.github/workflows/ci.yml`) runs them on every push — look at the badge/Actions tab for the real result.
+> **Note on the C# tests.** The xUnit tests in `backend-csharp/WMS.Tests` run the real EF migrations on a real PostgreSQL. They were written in an environment that could not download NuGet packages, so they were **type-checked but not executed there**. The database behaviour they rely on is executed by the Python tests above (same SQL file). CI (`.github/workflows/ci.yml`) runs them on every push — look at the badge/Actions tab for the real result.
 
 ## How the integrity works
 
@@ -36,6 +39,8 @@ The rules live **in the database**, so no code path (C#, Python, `psql`, a futur
 5. **Incremental weighted average cost (CUMP)** computed inside the same `UPDATE` (4-decimal precision; the old 2-decimal rounding drifted).
 6. **Sequences for document numbers**, a race-free `get_or_create` for stock rows (and a unique index that also covers `NULL` locations — the old one didn't, so duplicate rows were possible), lock ordering for transfers.
 7. A shipment is **all-or-nothing**: if line 2 lacks stock, line 1, the status claim and the invoice roll back.
+8. **Reservations** ([`stock_reservations.sql`](backend-csharp/WMS.Data/Sql/stock_reservations.sql)). `POST orders/{id}/reserve` holds stock for every open line, all or nothing (409 with the short product otherwise). Shipping consumes the line's own reservation first, then free stock, so units reserved for another order are never taken. Reservations are an explicit step, so orders that are never reserved behave as before. `wms_reservation_drift` must always be empty.
+9. **Partial shipments.** `OrderItems.ShippedQuantity` tracks each line. The order is `PartiallyShipped` until every line is complete, then `Shipped`, and the invoice is issued once, at that point. Cancel is allowed only while nothing has shipped and releases the reservations. Locks are always taken in the order *order row → item row → stock rows (by Id)*, so concurrent shipments cannot deadlock.
 
 ```
 React (nginx) ──/api──────────► C# API ──────► PostgreSQL ◄── read-only role ── Python analytics
@@ -111,16 +116,18 @@ PGTZ=UTC DB_NAME=wms_bench python performance/bench_analytics.py bench --version
 
 ## API (C#, `/api`, JWT required except login)
 
-`POST auth/login` · `POST auth/register` (Admin only) · `GET products|stocks|orders` (paged: `?page=&pageSize=`, max 500, total in `X-Total-Count`) · `POST orders` (`Idempotency-Key` header supported) · `POST orders/{id}/ship` · `POST purchaseorders/{id}/receive` · `POST returns/{id}/receive` · `POST inventory/adjust` · `POST inventory/transfer` · `GET /health`.
+`POST auth/login` · `POST auth/register` (Admin only) · `GET products|stocks|orders` (paged: `?page=&pageSize=`, max 500, total in `X-Total-Count`) · `POST orders` (`Idempotency-Key` header supported) · `POST orders/{id}/reserve` · `POST orders/{id}/ship` (partial allowed) · `POST orders/{id}/cancel` · `POST purchaseorders/{id}/receive` · `POST returns/{id}/receive` · `POST inventory/adjust` · `POST inventory/transfer` · `GET /health`.
 
 Analytics (`/python-api` via nginx, same JWT): `GET stats` · `sales-history` · `low-stock?limit=` · `predict/{productId}` · `optimize/{productId}` · `health`.
 
 ## Known limitations (not hidden)
 
-- **Reservations are not implemented.** `ReservedQuantity` is enforced by the guards, but nothing reserves stock when an order is created; stock is checked and removed at shipment.
-- **No partial shipments**: every order line must ship in full (the old code allowed it but invoiced the full amount).
-- **The React tables have no pagination UI yet.** The API caps at 500 rows per request, so screens beyond 500 rows need pagination added in the UI. The dashboard no longer depends on it.
-- Roles: only account creation is Admin-restricted; other endpoints are open to any authenticated user.
+- **Reservations are explicit.** Creating an order does not reserve stock; `POST orders/{id}/reserve` does. Until then stock is only checked at shipment, as before.
+- **`/predict` still reads every line of a hot product.** The covering index `ix_orders_id_cover` lets Postgres use an index-only scan (about 150 ms → 50 ms on a 600k-order, 22.7k-line hot product, measured). On a small table the planner still prefers a sequential scan, which is correct there; the test therefore proves the index is *usable*, not that the planner always picks it.
+- **Pagination is server-side on Orders, Products and Stock.** Dropdowns (product, warehouse, stock location) still load up to 500 rows; a warehouse with more than 500 stock rows needs a search-as-you-type picker.
+- **The C# changes for reservations, partial shipments and the authorization test were written without being able to compile them** (NuGet was unreachable where they were written). All of the logic they call is in SQL and is tested; run `dotnet test backend-csharp/WMS.sln` and read the result before trusting the C# layer.
+- **Live token checks are opt-in**: `tests/auth` needs a running API (`WMS_API_URL`, `JWT_SECRET`) and is skipped otherwise; it is not in CI yet.
+- Roles: only account creation is Admin-restricted; other endpoints are open to any authenticated user (and a test now fails if that set changes by accident).
 - Lots / serial numbers exist in the schema but are not wired into the ledger.
 - Tested on PostgreSQL 14 and 16 (all three suites: `tests/db`, `backend-python/tests`, `dotnet test`; CI runs both as a matrix). `docker-compose.yml` pins `postgres:14-alpine` by default so existing data volumes keep working (Postgres cannot open a volume written by another major version); override with `POSTGRES_IMAGE_TAG=16-alpine` to run on 16. To move an existing volume to 16: `pg_dump` from the 14 container, start a fresh 16 volume, restore.
 - Older design notes in `ARCHITECTURE.md`, `HOW_IT_WORKS.md` and friends predate this hardening and may disagree with this README — this file is the reference.

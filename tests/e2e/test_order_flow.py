@@ -182,17 +182,54 @@ def test_order_flow(session, data):
     res_cancel_shipped = session.post(f"{API_URL}/orders/{order_id}/cancel")
     assert res_cancel_shipped.status_code == 400, "Cannot cancel a shipped order"
 
-def test_drift(session):
-    # 7. After all of that, SELECT count(*) FROM wms_stock_drift and wms_reservation_drift must both be 0.
-    import subprocess
-    def get_count(table):
-        cmd = f'docker exec wms-db-1 psql -U postgres -d wms_db -t -c "SELECT count(*) FROM {table}"'
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        return int(res.stdout.strip())
-        
-    stock_drift = get_count("wms_stock_drift")
-    res_drift = get_count("wms_reservation_drift")
-    
+def test_drift(session, data):
+    # Make independent of test order by running its own reserve/ship/cancel flow before checking views
+    p1 = data["p1"]
+    w1 = data["w1"]
+
+    # 1. Order + Reserve + Ship
+    res_order = session.post(f"{API_URL}/orders", json={
+        "customerName": "Test Drift Order Ship",
+        "items": [{"productId": p1, "warehouseId": w1, "quantity": 2}]
+    })
+    assert res_order.status_code in (200, 201), res_order.text
+    order1 = res_order.json()
+    res_res = session.post(f"{API_URL}/orders/{order1['id']}/reserve")
+    assert res_res.status_code == 200, res_res.text
+    res_ship = session.post(f"{API_URL}/orders/{order1['id']}/ship", json={
+        "items": [{"orderItemId": order1["items"][0]["id"], "locationId": 1, "quantity": 2}]
+    })
+    assert res_ship.status_code == 200, res_ship.text
+
+    # 2. Order + Reserve + Cancel
+    res_cancel_order = session.post(f"{API_URL}/orders", json={
+        "customerName": "Test Drift Order Cancel",
+        "items": [{"productId": p1, "warehouseId": w1, "quantity": 1}]
+    })
+    assert res_cancel_order.status_code in (200, 201), res_cancel_order.text
+    order2 = res_cancel_order.json()
+    res_res2 = session.post(f"{API_URL}/orders/{order2['id']}/reserve")
+    assert res_res2.status_code == 200, res_res2.text
+    res_cancel = session.post(f"{API_URL}/orders/{order2['id']}/cancel")
+    assert res_cancel.status_code == 200, res_cancel.text
+
+    # 3. Direct psycopg2 query using DB_* environment variables
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        port=int(DB_PORT),
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM wms_stock_drift")
+            stock_drift = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM wms_reservation_drift")
+            res_drift = cur.fetchone()[0]
+    finally:
+        conn.close()
+
     assert stock_drift == 0, f"wms_stock_drift is {stock_drift}"
     assert res_drift == 0, f"wms_reservation_drift is {res_drift}"
 

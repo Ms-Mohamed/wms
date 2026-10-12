@@ -42,9 +42,12 @@ public class OrdersController : ControllerBase
             var order = await _orderService.CreateOrderAsync(createOrderDto, idempotencyKey, requestHash, ct);
             return CreatedAtAction(nameof(GetOrder), new { id = order.Id }, order);
         }
+        catch (IdempotencyKeyMismatchException ex)
+        {
+            return UnprocessableEntity(new { error = ex.Message });
+        }
         catch (ArgumentException ex)
         {
-            if (ex.Message.Contains("Idempotency key reused")) return UnprocessableEntity(new { error = ex.Message });
             return BadRequest(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)

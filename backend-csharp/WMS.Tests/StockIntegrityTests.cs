@@ -237,8 +237,9 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         var dto2 = new CreateOrderDto { CustomerName = "Test2", Items = { new CreateOrderItemDto { ProductId = productId, WarehouseId = warehouseId, Quantity = 2 } } };
         using (var scope2 = _pg.NewScope())
         {
-            var ex = await Assert.ThrowsAsync<ArgumentException>(() => scope2.Orders.CreateOrderAsync(dto2, key, "hash2"));
+            var ex = await Assert.ThrowsAsync<IdempotencyKeyMismatchException>(() => scope2.Orders.CreateOrderAsync(dto2, key, "hash2"));
             Assert.Contains("Idempotency key reused with different request body", ex.Message);
+            Assert.Equal(key, ex.Key);
         }
     }
 

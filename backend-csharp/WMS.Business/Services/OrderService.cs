@@ -40,7 +40,7 @@ public class OrderService : IOrderService
                 if (existing != null)
                 {
                     if (existing.RequestHash != null && existing.RequestHash != requestHash)
-                        throw new ArgumentException("Idempotency key reused with different request body");
+                        throw new IdempotencyKeyMismatchException(idempotencyKey);
                     if (existing.ResourceId > 0)
                     {
                         await transaction.DisposeAsync();

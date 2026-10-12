@@ -26,7 +26,7 @@ Every claim below has a test or a measurement you can re-run. Nothing here is "t
 | Analytics service is light | 63–66 MB RAM vs 193–257 MB for the pandas/scikit-learn original, 3.4× throughput | measured, see below |
 | Analytics service cannot write | read-only DB role + read-only sessions; test attempts an `UPDATE` | verified, 30 analytics tests pass (22 behaviour + 8 authorization) |
 
-> **Note on the C# tests.** The xUnit tests in `backend-csharp/WMS.Tests` run real EF migrations against PostgreSQL. All 21 tests (including concurrency, reservations, partial shipments, idempotency, pagination, and error message masking) have been compiled under `-warnaserror` and executed cleanly against PostgreSQL.
+> **Note on the C# tests.** The xUnit tests in `backend-csharp/WMS.Tests` run real EF migrations against PostgreSQL. All 22 tests (including concurrency, reservations, partial shipments, idempotency, returns valuation, pagination, and error message masking) have been compiled under `-warnaserror` and executed cleanly against PostgreSQL.
 
 ## How the integrity works
 

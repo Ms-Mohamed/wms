@@ -14,6 +14,8 @@ jobs:
         postgres-tag: ["14-alpine", "16-alpine"]
     env:
       POSTGRES_IMAGE_TAG: ${{ matrix.postgres-tag }}
+      POSTGRES_PASSWORD: test
+      WMS_RO_PASSWORD: test
     steps:
       - uses: actions/checkout@v4
       - name: Run all tests via Docker Compose test profile

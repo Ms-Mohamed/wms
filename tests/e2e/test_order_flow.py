@@ -35,14 +35,23 @@ def data(session):
     whs = session.get(f"{API_URL}/warehouses").json()
     assert prods, "No products"
     assert whs, "No warehouses"
-    # Make sure p1 has some stock
-    p1 = prods[0]['id']
-    p2 = prods[1]['id']
     w1 = whs[0]['id']
     
-    # Check stock
-    s1 = session.get(f"{API_URL}/stocks/product/{p1}/warehouse/{w1}").json()
-    # Assume there is enough stock for testing, since we seeded 50 and 200.
+    # Pick products that have sufficient stock (at least 30) for testing
+    candidates = []
+    for p in prods:
+        s = session.get(f"{API_URL}/stocks/product/{p['id']}/warehouse/{w1}").json()
+        if s and s.get("quantity", 0) >= 30:
+            candidates.append((p['id'], s))
+    
+    if len(candidates) >= 2:
+        p1 = candidates[0][0]
+        s1 = candidates[0][1]
+        p2 = candidates[1][0]
+    else:
+        p1 = prods[0]['id']
+        p2 = prods[1]['id']
+        s1 = session.get(f"{API_URL}/stocks/product/{p1}/warehouse/{w1}").json()
     
     return {"p1": p1, "p2": p2, "w1": w1, "q1": s1["quantity"], "s1_id": s1["id"]}
 
@@ -119,9 +128,38 @@ def test_order_flow(session, data):
     assert res_inv.status_code == 200, "Invoice should exist"
     
     # 5. Over-ship a line: expect 400 with a clear error.
+    # Keep the existing check, but rename its assertion message to "cannot ship a fully shipped order".
     ship_payload_over = {"items": [{"orderItemId": line1["id"], "locationId": 1, "quantity": 1}]}
     res = session.post(f"{API_URL}/orders/{order_id}/ship", json=ship_payload_over)
-    assert res.status_code == 400, "Should refuse over-shipping"
+    assert res.status_code == 400, "cannot ship a fully shipped order"
+
+    # Real check: create an order with one line of quantity 10, ship 4 (status PartiallyShipped), then try to ship 7 on that line.
+    payload_overship = {
+        "customerName": "Test Overship Check",
+        "items": [{"productId": p1, "warehouseId": w1, "quantity": 10}]
+    }
+    res_os = session.post(f"{API_URL}/orders", json=payload_overship)
+    assert res_os.status_code in (200, 201), res_os.text
+    order_os_id = res_os.json()["id"]
+    order_os_line = res_os.json()["items"][0]
+
+    res_ship4 = session.post(f"{API_URL}/orders/{order_os_id}/ship", json={
+        "items": [{"orderItemId": order_os_line["id"], "locationId": 1, "quantity": 4}]
+    })
+    assert res_ship4.status_code == 200, res_ship4.text
+    order_os_status = session.get(f"{API_URL}/orders/{order_os_id}").json()["status"]
+    assert order_os_status == "PartiallyShipped"
+
+    # Try to ship 7 on that line: expect 400 and assert the error body names the over-ship rule
+    res_ship7 = session.post(f"{API_URL}/orders/{order_os_id}/ship", json={
+        "items": [{"orderItemId": order_os_line["id"], "locationId": 1, "quantity": 7}]
+    })
+    assert res_ship7.status_code == 400, "Expected 400 for over-shipping"
+    error_msg = res_ship7.text.replace(".000", "")
+    assert ("only 6 remain" in error_msg) or ("WMS06" in res_ship7.text), f"Expected over-ship rule, got: {res_ship7.text}"
+    assert "already shipped" not in res_ship7.text.lower(), f"Expected over-ship rule not status rule, got: {res_ship7.text}"
+
+
     
     # 6. Cancel an order with nothing shipped: reservations are released. Cancel an order that has shipped: expect 400.
     # order 2 has nothing shipped, but reservation failed. Let's create order 3, reserve, then cancel.

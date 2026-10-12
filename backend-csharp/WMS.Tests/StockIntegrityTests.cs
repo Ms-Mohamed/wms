@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -333,4 +334,76 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         Assert.Equal(12m, await _pg.QuantityAsync(stockId));
         Assert.Equal(0, await _pg.DriftRowsAsync());
     }
+
+    // ---- pagination and exception masking tests -----------------------------------------------
+    [Fact]
+    public async Task Pagination_returns_different_pages_caps_pagesize_and_sets_total_count()
+    {
+        using var s = _pg.NewScope();
+        var supplier = new Supplier { Name = "Sup " + Guid.NewGuid().ToString("N")[..6] };
+        s.Db.Suppliers.Add(supplier);
+        await s.Db.SaveChangesAsync();
+
+        // Seed 15 purchase orders
+        for (int i = 0; i < 15; i++)
+        {
+            s.Db.PurchaseOrders.Add(new PurchaseOrder
+            {
+                OrderNumber = $"PO-PAG-{Guid.NewGuid():N}"[..12],
+                SupplierId = supplier.Id,
+                Status = PurchaseOrderStatus.Draft,
+                TotalAmount = 100m + i
+            });
+        }
+        await s.Db.SaveChangesAsync();
+
+        var controller = new PurchaseOrdersController(s.Db, s.Ledger, NullLogger<PurchaseOrdersController>.Instance);
+        var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        // Page 1 with pageSize 5
+        var resPage1 = await controller.GetPurchaseOrders(page: 1, pageSize: 5, CancellationToken.None);
+        var okResult1 = Assert.IsType<OkObjectResult>(resPage1.Result);
+        var page1Items = Assert.IsAssignableFrom<List<WMS.Business.DTOs.PurchaseOrderListDto>>(okResult1.Value);
+        Assert.Equal(5, page1Items.Count);
+        Assert.True(int.Parse(httpContext.Response.Headers["X-Total-Count"]!) >= 15);
+
+        // Page 2 with pageSize 5
+        var resPage2 = await controller.GetPurchaseOrders(page: 2, pageSize: 5, CancellationToken.None);
+        var okResult2 = Assert.IsType<OkObjectResult>(resPage2.Result);
+        var page2Items = Assert.IsAssignableFrom<List<WMS.Business.DTOs.PurchaseOrderListDto>>(okResult2.Value);
+        Assert.Equal(5, page2Items.Count);
+
+        // Distinct rows between page 1 and page 2
+        var p1Ids = page1Items.Select(x => x.Id).ToHashSet();
+        var p2Ids = page2Items.Select(x => x.Id).ToHashSet();
+        Assert.Empty(p1Ids.Intersect(p2Ids));
+
+        // PageSize capped above 500
+        var (normPage, normSize) = WMS.Business.DTOs.Paging.Normalize(1, 1000);
+        Assert.Equal(500, normSize);
+    }
+
+    [Fact]
+    public async Task Server_error_does_not_leak_exception_details()
+    {
+        // Force a server error in PurchaseOrdersController by cancelling the token
+        using var s = _pg.NewScope();
+        var controller = new PurchaseOrdersController(s.Db, s.Ledger, NullLogger<PurchaseOrdersController>.Instance);
+        controller.ControllerContext = new ControllerContext { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext() };
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await controller.GetPurchaseOrders(1, 10, cts.Token);
+        var objectResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(500, objectResult.StatusCode);
+
+        // Body must NOT contain exception details or stack traces
+        var json = System.Text.Json.JsonSerializer.Serialize(objectResult.Value);
+        Assert.DoesNotContain("OperationCanceledException", json);
+        Assert.DoesNotContain("Exception", json);
+        Assert.DoesNotContain("StackTrace", json);
+    }
 }
+

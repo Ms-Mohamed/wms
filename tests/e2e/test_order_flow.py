@@ -236,9 +236,11 @@ def test_drift(session, data):
 def test_idempotency(session, data):
     # 9. Re-run the idempotency check against the live API: 20 parallel POST /api/orders with the same Idempotency-Key
     # must create exactly 1 order, and the same key with a different body must return 422.
-    idem_key = "test-idem-" + str(time.time())
+    unique_marker = f"{time.time():.6f}"
+    idem_key = f"test-idem-{unique_marker}"
+    customer_name = f"Test Idem {unique_marker}"
     payload = {
-        "customerName": "Test Idem",
+        "customerName": customer_name,
         "items": [{"productId": data["p1"], "warehouseId": data["w1"], "quantity": 1}]
     }
     
@@ -257,8 +259,29 @@ def test_idempotency(session, data):
     
     # Same key, different body -> 422
     payload_diff = {
-        "customerName": "Test Idem Diff",
+        "customerName": f"Test Idem Diff {unique_marker}",
         "items": [{"productId": data["p1"], "warehouseId": data["w1"], "quantity": 1}]
     }
     res_diff = session.post(f"{API_URL}/orders", json=payload_diff, headers={"Idempotency-Key": idem_key})
     assert res_diff.status_code == 422
+
+    # Query the database: exactly 1 row in Orders and exactly 1 row in IdempotencyKeys
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        port=int(DB_PORT),
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT count(*) FROM "IdempotencyKeys" WHERE "Key" = %s', (idem_key,))
+            idem_rows = cur.fetchone()[0]
+            cur.execute('SELECT count(*) FROM "Orders" WHERE "CustomerName" = %s', (customer_name,))
+            order_rows = cur.fetchone()[0]
+    finally:
+        conn.close()
+
+    assert idem_rows == 1, f"Expected exactly 1 row in IdempotencyKeys for key {idem_key}, found {idem_rows}"
+    assert order_rows == 1, f"Expected exactly 1 row in Orders for customer {customer_name}, found {order_rows}"
+

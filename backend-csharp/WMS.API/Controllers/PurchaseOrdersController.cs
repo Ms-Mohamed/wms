@@ -25,21 +25,44 @@ public class PurchaseOrdersController : ControllerBase
     }
 
     // GET: api/PurchaseOrders
+    /// <summary>Paged: ?page=1&amp;pageSize=500 (default and max 500). Total in the X-Total-Count header.</summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<PurchaseOrder>>> GetPurchaseOrders()
+    public async Task<ActionResult<IEnumerable<WMS.Business.DTOs.PurchaseOrderListDto>>> GetPurchaseOrders([FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
     {
         try
         {
-            return await _context.PurchaseOrders
-                .Include(p => p.Supplier)
-                .Include(p => p.Items)
-                .OrderByDescending(p => p.OrderDate)
-                .ToListAsync();
+            var (p, size) = WMS.Business.DTOs.Paging.Normalize(page, pageSize);
+
+            var query = _context.PurchaseOrders.AsNoTracking();
+            Response.Headers["X-Total-Count"] = (await query.CountAsync(ct)).ToString();
+
+            var purchaseOrders = await query
+                .OrderByDescending(x => x.Id)
+                .Skip((p - 1) * size).Take(size)
+                .Select(x => new WMS.Business.DTOs.PurchaseOrderListDto
+                {
+                    Id = x.Id,
+                    OrderNumber = x.OrderNumber,
+                    OrderDate = x.OrderDate,
+                    Status = x.Status.ToString(),
+                    Counterparty = x.Supplier != null ? x.Supplier.Name : string.Empty,
+                    SupplierId = x.SupplierId,
+                    Supplier = x.Supplier != null ? new WMS.Business.DTOs.SupplierSummaryDto
+                    {
+                        Id = x.Supplier.Id,
+                        Name = x.Supplier.Name
+                    } : null,
+                    LineCount = x.Items.Count,
+                    TotalAmount = x.TotalAmount
+                })
+                .ToListAsync(ct);
+
+            return Ok(purchaseOrders);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting purchase orders");
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return StatusCode(500, new { error = "An error occurred while retrieving purchase orders" });
         }
     }
 
@@ -93,7 +116,7 @@ public class PurchaseOrdersController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error creating purchase order");
-            return StatusCode(500, $"Internal server error: {ex.Message}");
+            return StatusCode(500, new { error = "An error occurred while creating the purchase order" });
         }
     }
 

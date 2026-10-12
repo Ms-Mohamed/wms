@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import { suppliersApi, productsApi, purchaseOrdersApi, locationsApi } from '../services/api';
 import { Dialog } from '@headlessui/react';
-import type { CreatePurchaseOrderDto } from '../types';
+import type { CreatePurchaseOrderDto, PurchaseOrder } from '../types';
+import { usePaged } from '../hooks/usePaged';
+import Pagination from '../components/ui/Pagination';
 
 export default function PurchaseOrders() {
     const queryClient = useQueryClient();
@@ -24,11 +26,10 @@ export default function PurchaseOrders() {
     const location = useLocation();
     const { initialProduct } = location.state || {};
 
-    // Queries
-    const { data: orders, isLoading } = useQuery({
-        queryKey: ['purchaseOrders'],
-        queryFn: async () => (await purchaseOrdersApi.getAll()).data,
-    });
+    // Paged Query
+    const paged = usePaged<PurchaseOrder>('purchaseOrders', (p) => purchaseOrdersApi.getPage(p));
+    const orders = paged.rows;
+    const isLoading = paged.isLoading;
 
     const { data: suppliers } = useQuery({
         queryKey: ['suppliers'],
@@ -191,6 +192,7 @@ export default function PurchaseOrders() {
                     ))}
                     {orders?.length === 0 && <p className="p-6 text-gray-500 text-center">Aucune commande trouvée.</p>}
                 </ul>
+                <Pagination page={paged.page} pageCount={paged.pageCount} pageSize={paged.pageSize} total={paged.total} onPage={paged.setPage} onPageSize={paged.setPageSize} />
             </div>
 
             {/* Modal de création */}

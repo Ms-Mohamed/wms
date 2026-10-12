@@ -145,10 +145,18 @@ export const suppliersApi = {
 
 // API Functions - Purchase Orders
 export const purchaseOrdersApi = {
-  getAll: () => apiClient.get<PurchaseOrder[]>('/purchaseorders'),
+  getAll: (params?: { page?: number; pageSize?: number }) => apiClient.get<PurchaseOrder[]>('/purchaseorders', { params }),
+  getPage: (params: { page: number; pageSize: number }) => apiClient.get<PurchaseOrder[]>('/purchaseorders', { params }),
   getById: (id: number) => apiClient.get<PurchaseOrder>(`/purchaseorders/${id}`),
   create: (data: CreatePurchaseOrderDto) => apiClient.post<PurchaseOrder>('/purchaseorders', data),
   receive: (id: number, locationId?: number) => apiClient.post(`/purchaseorders/${id}/receive${locationId ? `?locationId=${locationId}` : ''}`),
+};
+
+export const returnsApi = {
+  getAll: (params?: { page?: number; pageSize?: number }) => apiClient.get<any[]>('/returns', { params }),
+  getPage: (params: { page: number; pageSize: number }) => apiClient.get<any[]>('/returns', { params }),
+  getById: (id: number) => apiClient.get<any>(`/returns/${id}`),
+  receive: (id: number) => apiClient.post(`/returns/${id}/receive`),
 };
 
 export const ordersApi = {

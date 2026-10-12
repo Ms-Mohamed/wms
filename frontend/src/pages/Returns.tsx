@@ -1,14 +1,17 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../services/api';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { returnsApi } from '../services/api';
 import { useToast } from '@chakra-ui/react';
+import { usePaged } from '../hooks/usePaged';
+import Pagination from '../components/ui/Pagination';
 
 interface ReturnOrder {
     id: number;
     returnNumber: string;
     status: string;
-    order: { orderNumber: string };
-    reason: string;
+    order?: { orderNumber: string };
+    reason?: string;
+    counterparty?: string;
 }
 
 export default function Returns() {
@@ -16,13 +19,12 @@ export default function Returns() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const toast = useToast();
 
-    const { data: returns, isLoading } = useQuery({
-        queryKey: ['returns'],
-        queryFn: async () => (await apiClient.get<ReturnOrder[]>('/returns')).data, // Need to implement GetAll in Controller first?
-    });
+    const paged = usePaged<ReturnOrder>('returns', (p) => returnsApi.getPage(p));
+    const returns = paged.rows;
+    const isLoading = paged.isLoading;
 
     const receiveMutation = useMutation({
-        mutationFn: (id: number) => apiClient.post(`/returns/${id}/receive`),
+        mutationFn: (id: number) => returnsApi.receive(id),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['returns'] });
             queryClient.invalidateQueries({ queryKey: ['stock'] });
@@ -89,6 +91,7 @@ export default function Returns() {
                         </li>
                     ))}
                 </ul>
+                <Pagination page={paged.page} pageCount={paged.pageCount} pageSize={paged.pageSize} total={paged.total} onPage={paged.setPage} onPageSize={paged.setPageSize} />
             </div>
 
             {isModalOpen && (

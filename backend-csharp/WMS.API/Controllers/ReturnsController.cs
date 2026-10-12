@@ -66,14 +66,47 @@ public class ReturnsController : ControllerBase
     }
 
     // GET: api/Returns
+    /// <summary>Paged: ?page=1&amp;pageSize=500 (default and max 500). Total in the X-Total-Count header.</summary>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<ReturnOrder>>> GetReturns()
+    public async Task<ActionResult<IEnumerable<WMS.Business.DTOs.ReturnOrderListDto>>> GetReturns([FromQuery] int? page, [FromQuery] int? pageSize, CancellationToken ct)
     {
-        return await _context.ReturnOrders
-            .Include(r => r.Items)
-            .ThenInclude(i => i.Product)
-            .OrderByDescending(r => r.Id)
-            .ToListAsync();
+        try
+        {
+            var (p, size) = WMS.Business.DTOs.Paging.Normalize(page, pageSize);
+
+            var query = _context.ReturnOrders.AsNoTracking();
+            Response.Headers["X-Total-Count"] = (await query.CountAsync(ct)).ToString();
+
+            var returns = await query
+                .OrderByDescending(r => r.Id)
+                .Skip((p - 1) * size).Take(size)
+                .Select(r => new WMS.Business.DTOs.ReturnOrderListDto
+                {
+                    Id = r.Id,
+                    ReturnNumber = r.ReturnNumber,
+                    RequestDate = r.RequestDate,
+                    Status = r.Status.ToString(),
+                    Counterparty = r.Order != null ? r.Order.CustomerName : string.Empty,
+                    OrderId = r.OrderId,
+                    Order = r.Order != null ? new WMS.Business.DTOs.OrderSummaryDto
+                    {
+                        Id = r.Order.Id,
+                        OrderNumber = r.Order.OrderNumber,
+                        CustomerName = r.Order.CustomerName
+                    } : null,
+                    Reason = r.Reason,
+                    LineCount = r.Items.Count,
+                    TotalAmount = r.Order != null ? r.Order.TotalAmount : 0m
+                })
+                .ToListAsync(ct);
+
+            return Ok(returns);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erreur lors de la récupération des retours");
+            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des retours" });
+        }
     }
 
     // POST: api/Returns/5/receive

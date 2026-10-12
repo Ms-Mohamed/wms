@@ -12,6 +12,8 @@ interface ReturnOrder {
     order?: { orderNumber: string };
     reason?: string;
     counterparty?: string;
+    returnedValue?: number;
+    totalAmount?: number;
 }
 
 export default function Returns() {
@@ -72,6 +74,9 @@ export default function Returns() {
                                     <h3 className="text-lg font-medium text-gray-900">{rma.returnNumber}</h3>
                                     <p className="text-sm text-gray-500">Commande : {rma.order?.orderNumber}</p>
                                     <p className="text-sm text-gray-500">Motif : {rma.reason}</p>
+                                    {rma.returnedValue !== undefined && (
+                                        <p className="text-sm font-semibold text-gray-700">Valeur : {rma.returnedValue.toFixed(2)} €</p>
+                                    )}
                                 </div>
                                 <div className="flex items-center space-x-4">
                                     <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 

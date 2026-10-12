@@ -37,8 +37,9 @@ public class ReturnOrderListDto
     public OrderSummaryDto? Order { get; set; }
     public string? Reason { get; set; }
     public int LineCount { get; set; }
+    public decimal ReturnedValue { get; set; }
     public decimal TotalAmount { get; set; }
-    public decimal Total => TotalAmount;
+    public decimal Total => ReturnedValue;
 }
 
 public class OrderSummaryDto

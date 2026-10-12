@@ -96,7 +96,14 @@ public class ReturnsController : ControllerBase
                     } : null,
                     Reason = r.Reason,
                     LineCount = r.Items.Count,
-                    TotalAmount = r.Order != null ? r.Order.TotalAmount : 0m
+                    ReturnedValue = r.Items.Sum(ri => ri.Quantity * (_context.OrderItems
+                        .Where(oi => oi.OrderId == r.OrderId && oi.ProductId == ri.ProductId)
+                        .Select(oi => (decimal?)oi.UnitPrice)
+                        .FirstOrDefault() ?? 0m)),
+                    TotalAmount = r.Items.Sum(ri => ri.Quantity * (_context.OrderItems
+                        .Where(oi => oi.OrderId == r.OrderId && oi.ProductId == ri.ProductId)
+                        .Select(oi => (decimal?)oi.UnitPrice)
+                        .FirstOrDefault() ?? 0m))
                 })
                 .ToListAsync(ct);
 

@@ -406,5 +406,67 @@ public class StockIntegrityTests : IClassFixture<PostgresFixture>
         Assert.DoesNotContain("Exception", json);
         Assert.DoesNotContain("StackTrace", json);
     }
+
+    [Fact]
+    public async Task Return_shows_correct_returned_value_not_order_total()
+    {
+        using var s = _pg.NewScope();
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var warehouse = new Warehouse { Code = "WH" + tag, Name = "WH " + tag };
+        s.Db.Warehouses.Add(warehouse);
+        await s.Db.SaveChangesAsync();
+
+        var p1 = new Product { Code = "P1" + tag, Name = "Prod 1", UnitPrice = 100m, CostPrice = 50m };
+        var p2 = new Product { Code = "P2" + tag, Name = "Prod 2", UnitPrice = 50m, CostPrice = 25m };
+        var p3 = new Product { Code = "P3" + tag, Name = "Prod 3", UnitPrice = 20m, CostPrice = 10m };
+        s.Db.AddRange(p1, p2, p3);
+        await s.Db.SaveChangesAsync();
+
+        var order = new Order
+        {
+            OrderNumber = "ORD-" + tag,
+            CustomerName = "ACME Returns Test",
+            Status = OrderStatus.Shipped,
+            TotalAmount = 170m,
+            SubTotal = 170m,
+            TaxRate = 0m,
+            TaxAmount = 0m,
+            Items = new List<OrderItem>
+            {
+                new() { ProductId = p1.Id, WarehouseId = warehouse.Id, Quantity = 1, UnitPrice = 100m, LineTotal = 100m },
+                new() { ProductId = p2.Id, WarehouseId = warehouse.Id, Quantity = 1, UnitPrice = 50m, LineTotal = 50m },
+                new() { ProductId = p3.Id, WarehouseId = warehouse.Id, Quantity = 1, UnitPrice = 20m, LineTotal = 20m },
+            }
+        };
+        s.Db.Orders.Add(order);
+        await s.Db.SaveChangesAsync();
+
+        var returnOrder = new ReturnOrder
+        {
+            ReturnNumber = "RMA-" + tag,
+            OrderId = order.Id,
+            Reason = "Defective part",
+            Status = ReturnStatus.Requested,
+            Items = new List<ReturnOrderItem>
+            {
+                new() { ProductId = p2.Id, Quantity = 1, Condition = ReturnCondition.Good }
+            }
+        };
+        s.Db.ReturnOrders.Add(returnOrder);
+        await s.Db.SaveChangesAsync();
+
+        var controller = new ReturnsController(s.Db, s.Ledger, NullLogger<ReturnsController>.Instance);
+        var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+
+        var actionResult = await controller.GetReturns(1, 10, CancellationToken.None);
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var items = Assert.IsAssignableFrom<List<WMS.Business.DTOs.ReturnOrderListDto>>(okResult.Value);
+        var myReturn = items.First(r => r.Id == returnOrder.Id);
+
+        // Must show 50 (value of returned item), NOT 170 (order total)
+        Assert.Equal(50m, myReturn.ReturnedValue);
+        Assert.Equal(50m, myReturn.Total);
+    }
 }
 

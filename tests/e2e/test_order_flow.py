@@ -14,15 +14,28 @@ if API_URL:
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "password123")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_NAME = os.getenv("DB_NAME", "wms_db")
+WMS_ADMIN_USER = os.getenv("WMS_ADMIN_USER", "admin")
+WMS_ADMIN_PASSWORD = os.getenv("WMS_ADMIN_PASSWORD")
 
-pytestmark = pytest.mark.skipif(not os.getenv("WMS_API_URL"), reason="WMS_API_URL not set")
+missing_env = [
+    var for var, val in [
+        ("WMS_API_URL", API_URL),
+        ("WMS_ADMIN_PASSWORD", WMS_ADMIN_PASSWORD),
+        ("DB_PASSWORD", DB_PASSWORD)
+    ] if not val
+]
+
+pytestmark = pytest.mark.skipif(
+    bool(missing_env),
+    reason=f"Missing required environment variable(s): {', '.join(missing_env)}"
+)
 
 @pytest.fixture(scope="module")
 def session():
     sess = requests.Session()
-    res = sess.post(f"{API_URL}/auth/login", json={"username": "admin", "password": "change-me-admin"})
+    res = sess.post(f"{API_URL}/auth/login", json={"username": WMS_ADMIN_USER, "password": WMS_ADMIN_PASSWORD})
     res.raise_for_status()
     token = res.json()["token"]
     sess.headers.update({"Authorization": f"Bearer {token}"})
